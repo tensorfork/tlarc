@@ -101,15 +101,13 @@
       (parameterize ((current-namespace ns))
         (namespace-syntax-introduce (syn expr stx)))))
 
-(define ar-nil '())
-(define ar-t #t)
 (define nil '())
 (define t #t)
 (define unset undefined)
 (define (unset? x) (eq? x unset))
 
-(define (ar-nil? x)
-  (eqv? x ar-nil))
+(define (nil? x)
+  (eqv? x nil))
 
 (define atstrings #f)
 
@@ -141,7 +139,8 @@
       (bytes? x)
       (ar-false? x)
       (syntax? x)
-      (keywordp x)))
+      (keywordp x)
+      (eq? (xcar x) 'lit)))
 
 (define (ac-literal x)
   (cond ((null? x) (list 'quote x))
@@ -314,9 +313,9 @@
   (cond ((pair? x)
          (imap (lambda (x) (ac-quoted x)) x))
         ((eqv? x 'nil)
-         ar-nil)
+         nil)
         ((eqv? x 't)
-         ar-t)
+         t)
         ((keywordp x)
          (keywordp x))
         (#t x)))
@@ -324,9 +323,9 @@
 (define (ac-unquoted x)
   (cond ((pair? x)
          (imap (lambda (x) (ac-unquoted x)) x))
-        ((ar-nil? x)
+        ((nil? x)
          'nil)
-        ((eqv? x ar-t)
+        ((eqv? x t)
          't)
         (#t x)))
 
@@ -392,7 +391,7 @@
 ; (if nil a b c) -> (if b c)
 
 (define (ac-if args env)
-  (cond ((null? args) (list 'quote ar-nil))
+  (cond ((null? args) (list 'quote nil))
         ((null? (cdr args)) (ac (car args) env))
         (#t `(if (not (ar-false? ,(ac (car args) env)))
                  ,(ac (cadr args) env)
@@ -457,7 +456,7 @@
                        (ac-complex-opt (cadar args)
                                        (if (pair? (cddar args))
                                            (caddar args)
-                                           ar-nil)
+                                           nil)
                                        env
                                        ra)
                        (ac-complex-args
@@ -502,7 +501,7 @@
 
 (define (ac-body* body env)
   (if (null? body)
-      (list (list 'quote ar-nil))
+      (list (list 'quote nil))
       (ac-body body env)))
 
 (define (ac-do body env)
@@ -713,7 +712,6 @@
   begin begin-for-syntax
   + - / *
   < <= = == >= > 
-  #t #f true false t nil
   car cdr caar cadr cddr caaar caadr cadar caddr cdaar cdadr cddar cdddr
   lib require provide module load eof read write eval
   length empty last keep set max min fill-table abs round count
@@ -723,6 +721,8 @@
   sort close error with-handlers
   date tokens
   place place* place/context place-kill
+  aif awhen aand
+  def
 ))
 (define (lex? v env)
   (memq v env))
@@ -794,22 +794,22 @@
 ; full Arc car and cdr, so we can destructure more things
 
 (define (ar-xcar x)
-  (if (ar-nil? x) x (car x)))
+  (if (nil? x) x (car x)))
 
 (define (ar-xcdr x)
-  (if (ar-nil? x) x (cdr x)))
+  (if (nil? x) x (cdr x)))
 
 ; convert #f from a Scheme predicate to NIL.
 
-(define (ar-nill x)
-  (if (or (ar-nil? x) (eq? x #f) (void? x)) ar-nil x))
+(define (nill x)
+  (if (or (nil? x) (eq? x #f) (void? x)) nil x))
 
 ; definition of falseness for Arc if.
 ; must include '() since sometimes Arc functions see
 ; Scheme lists (e.g. . body of a macro).
 
 (define (ar-false? x)
-  (or (ar-nil? x)
+  (or (nil? x)
       (eq? x #f)
       (void? x)
       (eq? x undefined)))
@@ -836,14 +836,14 @@
          (apply fn args))
         ((pair? fn)
          (list-ref fn (car args)))
-        ((ar-nil? fn)
+        ((nil? fn)
          fn)
         ((string? fn)
          (string-ref fn (car args)))
         ((hash? fn)
          (hash-ref fn
                    (car args)
-                   (if (pair? (cdr args)) (cadr args) ar-nil)))
+                   (if (pair? (cdr args)) (cadr args) nil)))
 ; experiment: means e.g. [1] is a constant fn
 ;       ((or (number? fn) (symbol? fn)) fn)
 ; another possibility: constant in functional pos means it gets
@@ -906,7 +906,7 @@
                    ((null? x)     x)
                    (#t            (err "Can't take cdr of" x)))))
 
-(define (tnil x) (if x ar-t ar-nil))
+(define (tnil x) (if x t nil))
 
 ; (pairwise pred '(a b c d)) =>
 ;   (and (pred a b) (pred b c) (pred c d))
@@ -914,11 +914,11 @@
 ; reduce?
 
 (define (pairwise pred lst)
-  (cond ((null? lst) ar-t)
-        ((null? (cdr lst)) ar-t)
-        ((not (ar-nil? (pred (car lst) (cadr lst))))
+  (cond ((null? lst) t)
+        ((null? (cdr lst)) t)
+        ((not (nil? (pred (car lst) (cadr lst))))
          (pairwise pred (cdr lst)))
-        (#t ar-nil)))
+        (#t nil)))
 
 ; not quite right, because behavior of underlying eqv unspecified
 ; in many cases according to r5rs
@@ -938,16 +938,12 @@
 
 (xdef raise raise)
 (xdef err err)
-(xdef nil ar-nil)
-(xdef t   ar-t)
-(xdef false #f)
-(xdef true  #t)
 
 (define (all test seq)
   (or (null? seq)
       (and (test (car seq)) (all test (cdr seq)))))
 
-(define (arc-list? x) (or (pair? x) (ar-nil? x)))
+(define (arc-list? x) (or (pair? x) (nil? x)))
 
 ; Generic +: strings, lists, numbers.
 ; Return val has same type as first argument.
@@ -1107,14 +1103,14 @@
               (let ((c (read-char (if (pair? str)
                                       (car str)
                                       (current-input-port)))))
-                (if (eof-object? c) ar-nil c))))
+                (if (eof-object? c) nil c))))
 
 
 (xdef readb (lambda str
               (let ((c (read-byte (if (pair? str)
                                       (car str)
                                       (current-input-port)))))
-                (if (eof-object? c) ar-nil c))))
+                (if (eof-object? c) nil c))))
 
 (define (ready? check peek i fail)
   (atomic-invoke
@@ -1124,12 +1120,12 @@
 (xdef peekc (lambda str
               (let* ((i (if (pair? str) (car str) (current-input-port)))
                      (c (ready? char-ready? peek-char i eof)))
-                (if (eof-object? c) ar-nil c))))
+                (if (eof-object? c) nil c))))
 
 (xdef peekb (lambda str
               (let* ((i (if (pair? str) (car str) (current-input-port)))
                      (c (ready? byte-ready? peek-byte i eof)))
-                (if (eof-object? c) ar-nil c))))
+                (if (eof-object? c) nil c))))
 
 (xdef writec (lambda (c . args)
                 (write-char c
@@ -1154,7 +1150,7 @@
     (when (pair? args)
       (f (car args) port))
     (unless explicit-flush (flush-output port)))
-  ar-nil)
+  nil)
 
 (xdef write (lambda args (printwith write   args)))
 (xdef disp  (lambda args (printwith display args)))
@@ -1219,8 +1215,8 @@
                                                  x))))
                       ((bool)    #t)
                       (else      (err "Can't coerce" x type))))
-    ((ar-nil? x)    (case type
-                      ((bytes)   ar-nil)
+    ((nil? x)       (case type
+                      ((bytes)   nil)
                       ((string)  "")
                       ((bool)    #f)
                       ((keyword) (string->keyword ""))
@@ -1260,9 +1256,9 @@
 ; calls open-socket. thanks, Eli!
 ; (define setuid (get-ffi-obj 'setuid #f (_fun _int -> _int)
 ;                  ; dummy version for Windows: http://arclanguage.org/item?id=10625.
-;                  (lambda () (lambda (x) ar-nil))))
+;                  (lambda () (lambda (x) nil))))
 ; (xdef setuid setuid)
-(xdef setuid (lambda args ar-nil))
+(xdef setuid (lambda args nil))
 
 (xdef new-thread thread)
 (xdef kill-thread kill-thread)
@@ -1272,14 +1268,14 @@
              (when (thread? thd)
                (unless (eqv? thd (current-thread))
                  (thread-wait thd)))
-             ar-t))
+             t))
 
-(define (wrapnil f) (lambda args (apply f args) ar-nil))
+(define (wrapnil f) (lambda args (apply f args) nil))
 
 ; Will system "execute" a half-finished string if thread killed
 ; in the middle of generating it?
 
-(xdef system (if (eqv? (system-type) 'windows) (lambda args ar-nil) (wrapnil system)))
+(xdef system (if (eqv? (system-type) 'windows) (lambda args nil) (wrapnil system)))
 
 (define (rmrf path)
   (delete-directory/files path #:must-exist? #f))
@@ -1297,10 +1293,10 @@
 
 ;(xdef table (lambda args
 ;               (fill-table (make-hash)
-;                           (if (pair? args) (car args) ar-nil))))
+;                           (if (pair? args) (car args) nil))))
 
 (define (fill-table h pairs)
-  (if (ar-nil? pairs)
+  (if (nil? pairs)
       h
       (let ((pair (car pairs)))
         (begin (hash-set! h (car pair) (cadr pair))
@@ -1327,16 +1323,16 @@
 ; create intermediate directories like mkdir -p.
 
 (xdef file-exists (lambda (name)
-                     (if (file-exists? name) name ar-nil)))
+                     (if (file-exists? name) name nil)))
 
 (xdef dir-exists (lambda (name)
-                     (if (directory-exists? name) name ar-nil)))
+                     (if (directory-exists? name) name nil)))
 
 (xdef rmfile (wrapnil delete-file))
 
 (xdef mvfile (lambda (old new)
                 (rename-file-or-directory old new #t)
-                ar-nil))
+                nil))
 
 (define-syntax w/restore
   (syntax-rules ()
@@ -1564,7 +1560,7 @@
 
 (xdef sref
   (lambda (com val ind)
-    (cond ((hash? com)  (if (ar-nil? val)
+    (cond ((hash? com)  (if (nil? val)
                             (hash-remove! com ind)
                             (hash-set! com ind val)))
           ((string? com) (string-set! com ind val))
@@ -1658,26 +1654,26 @@
         (#t (err "chan-fn: invalid channel: " c))))
 
 (xdef <- (lambda (c . args)
-           (ar-nill
+           (nill
              (if (null? args)
                  ((chan-fn c 'get) c)
                  (begin ((chan-fn c 'put) c args)
                         args)))))
 
 (xdef <-? (lambda (c . args)
-            (ar-nill
+            (nill
               (if (null? args)
                   ((chan-fn c 'try-get) c)
                   (let* ((evt ((chan-fn c 'put-evt) c args))
                          (ret (sync/timeout 0 evt)))
                     (if (eq? ret #f)
-                        ar-nil
+                        nil
                         args))))))
 
 ; Added because Mzscheme buffers output.  Not a permanent part of Arc.
 ; Only need to use when declare explicit-flush optimization.
 
-(xdef flushout (lambda () (flush-output) ar-t))
+(xdef flushout (lambda () (flush-output) t))
 
 (xdef ssyntax (lambda (x) (tnil (ssyntax? x))))
 
@@ -1722,7 +1718,7 @@
                (#t (err "Can't close " p))))
        args)
   (map (lambda (p) (try-custodian p)) args) ; free any custodian
-  ar-nil)
+  nil)
 
 (xdef close ar-close)
 
@@ -1731,7 +1727,7 @@
                               (unless (try-custodian p)
                                   (ar-close p)))
                             args)
-                       ar-nil))
+                       nil))
 
 (xdef memory current-memory-use)
 

@@ -3,6 +3,9 @@
 (compile-allow-set!-undefined #t)
 (compile-enforce-module-constants #f)
 
+(load "runtime.scm")
+(require 'runtime)
+
 (load "ac.scm")
 (require 'ac)
 

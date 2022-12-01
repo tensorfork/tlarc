@@ -42,8 +42,8 @@
 (def cadr (xs) (car (cdr xs)))
 (def cddr (xs) (cdr (cdr xs)))
 
-(def no (x) (is x nil))
-(def yes (x) (if x true false))
+;(def no (x) (is x nil))
+;(def yes (x) (if x true false))
 
 (def bool (x)
   (if (is (type x) 'fn)
@@ -52,7 +52,7 @@
 
 (def acons (x) (is (type x) 'cons))
 
-(def atom (x) (no (acons x)))
+;(def atom (x) (no (acons x)))
 
 ; Can return to this def once Rtm gets ac to make all rest args
 ; nil-terminated lists.
@@ -133,13 +133,13 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
 
 ; Rtm prefers to overload + to do this
 
-(def join args
-  (if (no args)
-      nil
-      (let a (car args) 
-        (if (no a) 
-            (apply join (cdr args))
-            (cons (car a) (apply join (cdr a) (cdr args)))))))
+;(def join args
+;  (if (no args)
+;      nil
+;      (let a (car args) 
+;        (if (no a) 
+;            (apply join (cdr args))
+;            (cons (car a) (apply join (cdr a) (cdr args)))))))
 
 ; Need rfn for use in macro expansions.
 
@@ -447,7 +447,7 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
   (if (is (car f) 'compose)
        ((afn (fs)
           (if (caris (car fs) 'compose)            ; nested compose
-               (self (join (cdr (car fs)) (cdr fs)))
+               (self (+ (cdr (car fs)) (cdr fs)))
               (cdr fs)
                (list (car fs) (self (cdr fs)))
               (cons (car fs) args)))
@@ -1514,10 +1514,10 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
       (when (> v n) (= winner k n v)))
     (list winner n)))
 
-(def reduce (f xs)
-  (if (cddr xs)
-      (reduce f (cons (f (car xs) (cadr xs)) (cddr xs)))
-      (apply f xs)))
+;(def reduce (f xs)
+;  (if (cddr xs)
+;      (reduce f (cons (f (car xs) (cadr xs)) (cddr xs)))
+;      (apply f xs)))
 
 (def rreduce (f xs)
   (if (cddr xs)
