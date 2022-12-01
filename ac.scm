@@ -844,6 +844,9 @@
          (hash-ref fn
                    (car args)
                    (if (pair? (cdr args)) (cadr args) ar-nil)))
+        ((namespace? fn)
+         (let ((x (namespace-variable-value (car args) #t (lambda () #f) fn)))
+           (if x (cons (car args) x) ar-nil)))
 ; experiment: means e.g. [1] is a constant fn
 ;       ((or (number? fn) (symbol? fn)) fn)
 ; another possibility: constant in functional pos means it gets
@@ -1569,6 +1572,7 @@
                             (hash-set! com ind val)))
           ((string? com) (string-set! com ind val))
           ((pair? com)   (nth-set! com ind val))
+          ((namespace? com) (namespace-set-variable-value! ind val #t com))
           (#t (err "Can't set reference " com ind val)))
     val))
 
