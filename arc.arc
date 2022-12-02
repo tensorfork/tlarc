@@ -1295,7 +1295,7 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
     `(let ,t1 (now)
        (do1 ,expr
             (let ,t2 (now)
-              (ero ,label "time: " (num (- ,t2 ,t1) 4 t) " msec."))))))
+              (ero ,label "time: " (num (- ,t2 ,t1) 4 t) " sec."))))))
 
 (mac jtime (expr)
   `(do1 'ok (time ,expr)))

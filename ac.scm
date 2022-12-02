@@ -411,6 +411,18 @@
 ; translate fn directly into a lambda if it has ordinary
 ; parameters, otherwise use a rest parameter and parse it.
 
+(define (ac-body? args (n 0))
+  (if (symbol? args)
+      n
+      (and (pair? args)
+           (if (symbol? (cdr args))
+               (+ n 1)
+               (ac-body? (cdr args) (+ n 1))))))
+
+(define (ar-body f args ks vs (acc (list)))
+  (cond ((null? ks) (apply f (append args acc)))
+        (#t (ar-body f args (cdr ks) (cdr vs) (append acc (list (car ks) (car vs)))))))
+
 (define (ac-fn args body env)
   (if (ac-complex-args? args)
       (ac-complex-fn args body env)
@@ -649,7 +661,8 @@
           ((and direct-calls (symbol? fn) (not (lex? fn env)) (bound? fn)
                 (procedure? (bound? fn)))
            (ac-global-call fn args env))
-          ((memf keywordp args)
+          ((or (memf keywordp args)
+               (eq? fn 'list))
            `(,(ac fn env) ,@(map (lambda (x) (ac x env)) args)))
           ((= (length args) 0)
            `(ar-funcall0 ,(ac fn env) ,@(map (lambda (x) (ac x env)) args)))
@@ -724,6 +737,7 @@
   date tokens
   place place* place/context place-kill
   compile
+  number?
 ))
 (define (lex? v env)
   (memq v env))
@@ -1580,6 +1594,17 @@
   (x-set-car! (list-tail lst n) val))
 
 ; rewrite to pass a (true) gensym instead of #f in case var bound to #f
+
+(define (ar-value arcname (fail unset) (ns (current-namespace)))
+  (let* ((unbound (list 'unbound))
+         (x (namespace-variable-value (ac-global-name arcname)
+                                      #t
+                                      (lambda () unbound)
+                                      ns)))
+    (if (eq? x unbound) fail x)))
+
+(xdef value ar-value)
+
 
 (define (bound? arcname)
   (namespace-variable-value (ac-global-name arcname)
