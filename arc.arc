@@ -1569,9 +1569,9 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
   (expandpath name root-path))
 
 (or= loaded-files*      (map libpath (list "libs.arc" "arc.arc" "ac.scm"))
-     loaded-file-times* (obj (libpath "ac.scm") (modtime:libpath "ac.scm")
-                             (libpath "arc.arc") (modtime:libpath "arc.arc")
-                             (libpath "libs.arc") (modtime:libpath "libs.arc")))
+     loaded-file-times* (listtab (list (list (libpath "ac.scm") (modtime:libpath "ac.scm"))
+                                       (list (libpath "arc.arc") (modtime:libpath "arc.arc"))
+                                       (list (libpath "libs.arc") (modtime:libpath "libs.arc")))))
 
 (def loaded-files () (rev loaded-files*))
 
@@ -1607,8 +1607,9 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
 (or= reload-count* 0)
 
 (def reload ((o file (loaded-files)))
-  (if (file-changed? "ac.scm")
-       (map [list _ (load _)] file)
+  (if (file-changed? (libpath "ac.scm"))
+       (do (dbg)
+         (map [list _ (load _)] file))
       (acons file)
        (map reload file)
       (file-changed? file)
@@ -1835,13 +1836,13 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
 
 (def zip ls (unzip ls))
 
-(def tmpfile ((o val "") (o writer disp) (o name "tmpXXXXXXXXXX.tmp") (o path "arc/tmp/"))
+(def tmpfile ((o val "") (o writer disp) (o name "tmpXXXXXXXXXX.tmp") (o path (libpath "arc/tmp/")))
   (ensure-dir path)
   (let file (+ path (map [if (is _ #\X) (rand-char) _] name))
     (w/outfile o file (writer val o))
     file))
 
-(def call-w/tmpfile (val f (o writer disp) (o name "tmpXXXXXXXXXX.tmp") (o path "arc/tmp/"))
+(def call-w/tmpfile (val f (o writer disp) (o name "tmpXXXXXXXXXX.tmp") (o path (libpath "arc/tmp/")))
   (let file (tmpfile val writer name path)
     (after (f file)
       (errsafe:rmfile file))))
