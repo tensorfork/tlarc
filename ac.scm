@@ -1459,6 +1459,8 @@
       (let-values (((here-dir here-name ignored) (split-path ccr)))
         (build-path here-dir here-name)))))
 
+(define-runtime-path root-path (build-path "."))
+
 (define ac-load-path
   (list (path->string (path-only (path->complete-path (find-system-path 'run-file))))
         (cwd)))
@@ -1844,8 +1846,12 @@
                                      (cons (car cs) (unesc (cdr cs))))))))
                   (unesc (string->list s)))))
 
-
-(define bcrypt-lib (if (eqv? (system-type) 'windows) (ffi-lib "src\\bcrypt\\bcrypt") (ffi-lib "src/bcrypt/build/libbcrypt")))
+(define bcrypt-lib-path
+  (if (eqv? (system-type) 'windows)
+    (build-path root-path "src" "bcrypt" "bcrypt")
+    (build-path root-path "src" "bcrypt" "build" "libbcrypt")))
+                                                    
+(define bcrypt-lib (ffi-lib bcrypt-lib-path))
 
 (define bcrypt-fn (get-ffi-obj "bcrypt" bcrypt-lib (_fun _string _string (out : _bytes = (make-bytes 256)) -> _void -> (cast out _bytes _string/utf-8))))
 

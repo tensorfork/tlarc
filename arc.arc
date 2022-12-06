@@ -1565,10 +1565,13 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
        (pr ,@(parse-format str))))
 )
 
-(or= loaded-files*      (list "libs.arc" "arc.arc" "ac.scm")
-     loaded-file-times* (obj "ac.scm" (modtime "ac.scm")
-                             "arc.arc" (modtime "arc.arc")
-                             "libs.arc" (modtime "libs.arc")))
+(def libpath (name)
+  (expandpath name root-path))
+
+(or= loaded-files*      (map libpath (list "libs.arc" "arc.arc" "ac.scm"))
+     loaded-file-times* (obj (libpath "ac.scm") (modtime:libpath "ac.scm")
+                             (libpath "arc.arc") (modtime:libpath "arc.arc")
+                             (libpath "libs.arc") (modtime:libpath "libs.arc")))
 
 (def loaded-files () (rev loaded-files*))
 
