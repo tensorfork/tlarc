@@ -975,6 +975,8 @@
                   (apply append args))
                  ((evt? (car args))
                   (apply choice-evt args))
+                 ((path? (car args))
+                  (apply build-path args))
                  (#t (apply + args)))))
 
 (define (char-or-string? x) (or (string? x) (char? x)))
