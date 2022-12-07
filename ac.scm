@@ -1364,6 +1364,20 @@
 
 (xdef expandpath ar-expand-path)
 
+(define-runtime-path here-path (build-path "."))
+(define ar-libdir (make-parameter (ar-expand-path "." here-path)
+                                #f
+                                'libdir))
+
+(xdef libdir ar-libdir)
+(xdef cwd current-directory)
+
+(define (ar-library-path . parts)
+  (ar-expand-path (apply build-path parts)
+                  (ar-libdir)))
+
+(xdef libpath ar-library-path)
+
 (define-syntax w/restore
   (syntax-rules ()
     ((_ var val body ...)
@@ -1451,23 +1465,12 @@
     ; (dynamic-require 'xrepl #f)
     (port-count-lines! (current-input-port))
     (read-eval-print-loop)))
- 
-(define (cwd)
-  (path->string (find-system-path 'orig-dir)))
 
 (define-syntax-rule (get-here)
   (begin 
     (let ((ccr (current-contract-region)))
       (let-values (((here-dir here-name ignored) (split-path ccr)))
         (build-path here-dir here-name)))))
-
-(define-runtime-path root-path (build-path "."))
-
-(define ac-load-path
-  (list (path->string (path-only (path->complete-path (find-system-path 'run-file))))
-        (cwd)))
-
-(xdef load-path ac-load-path)
 
 (define (aload1 p)
   (let ((x (sread p)))
@@ -1850,8 +1853,8 @@
 
 (define bcrypt-lib-path
   (if (eqv? (system-type) 'windows)
-    (build-path root-path "src" "bcrypt" "bcrypt")
-    (build-path root-path "src" "bcrypt" "build" "libbcrypt")))
+    (build-path (ar-libdir) "src" "bcrypt" "bcrypt")
+    (build-path (ar-libdir) "src" "bcrypt" "build" "libbcrypt")))
                                                     
 (define bcrypt-lib (ffi-lib bcrypt-lib-path))
 

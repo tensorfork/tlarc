@@ -1565,22 +1565,16 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
        (pr ,@(parse-format str))))
 )
 
-(def libpath (name)
-  (expandpath name root-path))
-
-(or= loaded-files*      (map libpath (list "libs.arc" "arc.arc" "ac.scm"))
-     loaded-file-times* (listtab (list (list (libpath "ac.scm") (modtime:libpath "ac.scm"))
-                                       (list (libpath "arc.arc") (modtime:libpath "arc.arc"))
-                                       (list (libpath "libs.arc") (modtime:libpath "libs.arc")))))
+(or= loaded-files*      nil
+     loaded-file-times* (obj))
 
 (def loaded-files () (rev loaded-files*))
 
 (def loadtime (file) (loaded-file-times* file))
 
-(def notetime (file value (o secs (modtime file)))
+(def notetime (file (o secs (modtime file)))
   (pushnew file loaded-files*)
-  (= (loaded-file-times* file) secs)
-  value)
+  (= (loaded-file-times* file) secs))
 
 (def arcfile? (file)
   (and (> (len file) 4)
@@ -1596,10 +1590,16 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
         (= x (evalfn e))))
     x))
 
-(def load (file)
-  (let value (or (hook 'load file) (load-code file))
-    (notetime file value)
+(def load (file (o loaded))
+  (let value (unless loaded
+               (or (hook 'load file)
+                   (load-code file)))
+    (notetime file)
     value))
+
+; Both the compiler and this file are already loaded; note those.
+(each file (list "ac.scm" "arc.arc")
+  (load (libpath file) 'loaded))
 
 (def file-changed? (file)
   (isnt (modtime file) (loadtime file)))
