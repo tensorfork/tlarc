@@ -65,14 +65,15 @@
                        (allchars i)))))
 
 (def http-demo ((o url "https://news.ycombinator.com") (o filename))
-  (aand (fetch url binary: t)
-        (if filename
-            (do (savebytes it!body filename)
-                (ero "Saved" (len it!body) "bytes to" filename))
-            (do (each (k v) it!headers
-                  (ero k ": " v sep: ""))
-                (ero)
-                (writebytes it!body)))))
+  (let r (fetch url binary: t)
+    (ero r!version r!code r!status)
+    (each (k v) r!headers
+      (ero k ": " v sep: ""))
+    (ero)
+    (if filename
+        (do (savebytes r!body filename)
+            (ero "Saved" (len r!body) "bytes to" filename))
+        (writebytes r!body))))
 
 http-demo
 
