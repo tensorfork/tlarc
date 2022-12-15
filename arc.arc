@@ -35,8 +35,19 @@
 
 (assign def (annotate 'mac
                (fn (name parms . body)
-                 `(do (sref sig ',parms ',name)
-                      (safeset ,name (fn ,parms ,@body))))))
+                 (if (is (type name) 'cons)
+                     ((fn ((kind attr) (o name (sym:cat kind "--" attr)))
+                       `(do (def ,name ,parms ,@body)
+                            (sref (or= ,kind (obj))
+                                  ,name
+                                  ',attr)
+                            ,name))
+                      name)
+                     body
+                     `(do (sref sig ',parms ',name)
+                          (safeset ,name (fn ,parms ,@body)))
+                     `(do (sref sig nil ',name)
+                          (safeset ,name ,parms))))))
 
 (def caar (xs) (car (car xs)))
 (def cadr (xs) (car (cdr xs)))
@@ -174,10 +185,12 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
       `(let ,names (uniq ',names) ,@body)))
 
 (mac or args
-  (and args
-       (w/uniq g
-         `(let ,g ,(car args)
-            (if ,g ,g (or ,@(cdr args)))))))
+  (if args
+      (if (cdr args)
+          (w/uniq g
+            `(let ,g ,(car args)
+               (if ,g ,g (or ,@(cdr args)))))
+          (car args))))
 
 (def alist (x) (or (no x) (is (type x) 'cons)))
 
@@ -1312,12 +1325,12 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
 (def split (seq pos)
   (list (cut seq 0 pos) (cut seq pos)))
 
-(mac time (expr (o label))
+(mac time (expr label: (o label))
   (w/uniq (t1 t2)
     `(let ,t1 (now)
        (do1 ,expr
             (let ,t2 (now)
-              (ero ,label "time: " (num (* 1000 (- ,t2 ,t1)) 2 t) " msec."))))))
+              (ero ,label "time:" (num (* 1000 (- ,t2 ,t1)) 2 t) "msec."))))))
 
 (mac jtime (expr)
   `(do1 'ok (time ,expr)))
@@ -1616,14 +1629,19 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
 (mac w/table (var . body)
   `(let ,var (table) ,@body ,var))
 
-(def ero args
-  (w/stdout (stderr) 
-    (each a args 
-      (when a
-        (disp a)
-        (writec #\space)))
-    (writec #\newline))
-  (car args))
+(def ero (sep: (o sep " ")
+          end: (o end "\n")
+          file: (o port (stderr))
+          . args)
+  (let c ""
+    (w/stdout port
+      (each a args 
+        (when a
+          (disp c)
+          (disp a)
+          (= c sep)))
+      (disp end))
+    (car args)))
 
 (def queue () (list nil nil 0))
 

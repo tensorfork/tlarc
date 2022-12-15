@@ -281,18 +281,22 @@
                                 #t))
                sym))
 
-(define (build-sexpr toks orig)
+(define (build-sexpr toks orig (props (list)))
+  (define (ret v)
+    (if (null? props) v
+        (append (list 'ar-method v)
+                (map (lambda (x) (list 'quote x))
+                     props))))
   (cond ((null? toks)
          '%get)
         ((null? (cdr toks))
-         (chars->value (car toks)))
-        (#t
-         (list (build-sexpr (cddr toks) orig)
-               (if (eqv? (cadr toks) #\!)
-                   (list 'quote (chars->value (car toks)))
-                   (if (or (eqv? (car toks) #\.) (eqv? (car toks) #\!))
-                       (err "Bad ssyntax" orig)
-                       (chars->value (car toks))))))))
+         (ret (chars->value (car toks))))
+        ((eqv? (cadr toks) #\.)
+         (build-sexpr (cddr toks) orig (cons (chars->value (car toks)) props)))
+        ((eqv? (cadr toks) #\!)
+         (ret (list (build-sexpr (cddr toks) orig)
+                    (list 'quote (chars->value (car toks))))))
+        (#t (err "Bad ssyntax" orig))))
 
 (define (insym? char sym) (member char (cdr (reverse (symbol->chars sym)))))
 
@@ -886,17 +890,87 @@
 ; default vals with them.  To make compatible with existing written tables,
 ; just use an atom or 3-elt list to keep the default.
 
-(define (ar-apply fn args)
+(define (ar-parent-name? x)
+  (if (symbol? x)
+      (ar-parent-name? (symbol->string x))
+      (and (string? x)
+           (> (string-length x) 1)
+           (string-suffix? x "*")
+           (not (string-prefix? x "*"))
+           (string->symbol x))))
+
+(define (ar-alref h k (fail ar-nil))
+  (cadr (or (assoc k h) (list k fail))))
+
+(define (ar-ref h k (fail ar-nil))
+  (cond ((pair? h)
+         (ar-alref h k fail))
+        ((hash? h)
+         (hash-ref h k fail))
+        (#t (err "Can't take ref" h k))))
+
+(define (ar-keys h)
+  (cond ((pair? h)
+         (map car h))
+        ((hash? h)
+         (hash-keys h))
+        (#t (err "Can't take keys" h))))
+
+(define (ar-listify x)
+  (if (arc-list? x) x (if (eq? x #f) (list) (list x))))
+
+(define (ar-deref x)
+  (if (procedure? x) (x) x))
+
+(define (ar-parents h)
+  (apply append
+         (map (lambda (x)
+                (ar-listify (ar-deref (ar-ref h x ar-nil))))
+              (keep ar-parent-name? (ar-keys h)))))
+
+(define (ar-lookup h k)
+  (cond ((symbol? h)
+         (ar-lookup (bound? h) k))
+        ((or (ar-false? h) (unset? h))
+         #f)
+        (#t
+         (let/ec return
+           (define it (ar-ref h k undefined))
+           (unless (unset? it)
+             (return (list h k it)))
+           (when (symbol? k)
+             (for-each (lambda (p)
+                         (define it (ar-lookup p k))
+                         (when it (return it)))
+                       (ar-parents h)))
+           #f))))
+
+(define (ar-grab h #:fail (fail ar-nil) k . ks)
+  (define it (ar-lookup h k))
+  (if it
+      (if (null? ks)
+          (caddr it)
+          (apply ar-grab (caddr it) ks #:fail fail))
+      fail))
+
+(define (ar-apply fn args (keys #f) (vals #f))
   (cond ((procedure? fn)
-         (apply fn args))
+         (if keys
+             (keyword-apply fn keys vals args)
+             (apply fn args)))
+        ((symbol? fn)
+         (bound? fn (ar-xcar args)))
         ((pair? fn)
-         (list-ref fn (car args)))
+         (if (number? (car args))
+             (list-ref fn (car args))
+             (ar-grab fn (car args))))
         ((string? fn)
          (string-ref fn (car args)))
         ((hash? fn)
-         (hash-ref fn
-                   (car args)
-                   (if (pair? (cdr args)) (cadr args) ar-nil)))
+         (define it (ar-grab fn (car args)))
+         (if (eq? (ar-type it) 'prop)
+             ((caddr it) fn)
+             it))
         ((and (sequence? fn) (not (null? fn)))
          (sequence-ref fn (car args)))
 ; experiment: means e.g. [1] is a constant fn
@@ -905,8 +979,34 @@
 ; passed to the first arg, i.e. ('kids item) means (item 'kids).
         (#t (err "Function call on inappropriate object" fn args))))
 
-(xdef apply (lambda (fn . args)
-               (ar-apply fn (ar-apply-args args))))
+(define arc-apply (make-keyword-procedure
+                    (lambda (keys vals fn . args)
+                      (ar-apply fn (ar-apply-args args) keys vals))
+                    (lambda (fn . args)
+                      (ar-apply fn (ar-apply-args args)))))
+
+(xdef apply arc-apply)
+
+(define (ar-mcall self name . args)
+  (apply (ar-grab self name) (cons self args)))
+
+(define (ar-rename fn to)
+  (when (procedure? to) (set! to (object-name to)))
+  (if (and (procedure? fn) (symbol? to))
+      (procedure-rename fn to)
+      fn))
+
+(define (ar-method self . names)
+  (define fn (apply ar-grab self names #:fail unset))
+  (when (unset? fn)
+    (err "Unknown method" names self))
+  (ar-rename
+    (make-keyword-procedure
+      (lambda (kw kv . args)
+        (keyword-apply fn kw kv (cons self args)))
+      (lambda args
+        (apply fn (cons self args))))
+    fn))
 
 ; special cases of ar-apply for speed and to avoid consing arg lists
 
@@ -1812,6 +1912,7 @@
          (cond ((input-port? p)   (close-input-port p))
                ((output-port? p)  (close-output-port p))
                ((tcp-listener? p) (tcp-close p))
+               ((udp? p)          (udp-close p))
                (#t (err "Can't close " p))))
        args)
   (map (lambda (p) (try-custodian p)) args) ; free any custodian

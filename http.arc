@@ -1,54 +1,89 @@
-(declare 'atstrings t)
+#'(require net/http-client)
+#'(require net/url)
+#'(require net/url-string)
 
-(def http-gen-req-header (host (o path "/") (o method "GET") (o accept "*/*") (o agent "curl/7.64.1"))
-  (+ "@method @path HTTP/1.1\r\n"
-     "Host: @{host}\r\n"
-     "User-Agent: @{agent}\r\n"
-     "Accept: @{accept}\r\n"
-     "\r\n"))
+(mac defget body
+  `(annotate 'prop [do ,@body]))
 
-(def http-parse-response (bytes)
-  (withs ((hdr _ body) (or (partition (coerce "\r\n\r\n" 'bytes) bytes)
-                           (partition (coerce "\n\n" 'bytes) bytes)
-                           (err "invalid response" (cut (coerce bytes 'string) 0 100)))
-          hdr (lines:coerce hdr 'string)
-          (version _ status) (partition " " (car hdr))
-          h (listtab:map [let (lh rh) (halve _ #\space)
-                           (list (sym:downcase:cut lh 0 -1)
-                                 (cut rh 1))]
-                         (cdr hdr)))
-    (= h!version version
-       h!status status)
-    (list h body)))
+(deftem url
+  scheme "http"
+  host   nil
+  port   (defget (case _!scheme
+                   "https" 443
+                   "http" 80))
+  path   nil
+  query  nil
+  anchor nil)
 
-(def http-fetch-bytes (url (o path "/") (o accept "*/*"))
-  (withs ((host (o port "80")) (tokens url #\:)
-          port (int port)
-          (i o) (w/values (tcp-connect host port))
-          hdr (http-gen-req-header url path accept))
-    (disp hdr o)
-    (close o)
-    (after (drain:readb i)
-      (close i))))
+(def url-parse (url)
+  (unless (string-contains? url "://")
+    (= url (+ "http://" url)))
+  (aand (cdr:vector->list:struct->vector:string->url url)
+        (let (scheme user host port path-absolute? path query anchor) it
+          (inst 'url
+                'scheme (or scheme nil)
+                'host (or host nil)
+                'port (or port nil)
+                'path (map path/param-path path)
+                'query (or query nil)
+                'anchor (or anchor nil)))))
 
-(def http-fetch (url (o path "/") (o accept "*/*"))
-  (aand (http-fetch-bytes url path accept)
-        (http-parse-response it)))
+(def url-unparse (url)
+  (make-url (or url!scheme false)
+            (or url!user false)
+            (or url!host false)
+            (and (isnt url!port (if (is url!scheme "https") 443 80))
+                 (or url!port false))
+            t ; path-absolute?
+            (map [make-path/param _ nil] url!path)
+            (or url!query false)
+            (or url!anchor false)))
 
+(def fetch (url binary: (o binary? false))
+  (withs (u (url-parse url)
+          path (+ "/" (string-join u!path "/"))
+          ssl (is u!scheme "https")
+          port (or u!port (if ssl 443 80))
+          (status hdr i) (w/values:http-sendrecv
+                           u!host
+                           port: port
+                           ssl?: ssl
+                           path)
+          (version code . msg) (tokens:bytes->string/utf-8 status)
+          code (or (errsafe:int code) code)
+          msg (string-join msg " "))
+      (obj version version
+           code    code
+           status  msg
+           headers (each h hdr
+                     (aand (bytes->string/utf-8 h)
+                           (string-split it ": ")
+                           (let (k v) it
+                             (out (sym:downcase k) v))))
+           body    (if binary?
+                       (allbytes i)
+                       (allchars i)))))
 
-;arc> (aand (http-fetch "example.com") (car it))
-;'#hash((age . "524940")
-;       (cache-control . "max-age=604800")
-;       (content-length . "1256")
-;       (content-type . "text/html; charset=UTF-8")
-;       (date . "Sat, 03 Dec 2022 05:19:06 GMT")
-;       (etag . "\"3147526947+ident\"")
-;       (expires . "Sat, 10 Dec 2022 05:19:06 GMT")
-;       (last-modified . "Thu, 17 Oct 2019 07:18:26 GMT")
-;       (server . "ECS (cha/80C2)")
-;       (status . "200 OK")
-;       (vary . "Accept-Encoding")
-;       (version . "HTTP/1.1")
-;       (x-cache . "HIT"))
-;arc> (aand (http-fetch "example.com") (coerce (cadr it) 'string 'utf8) (ellipsize it))
-;"<!doctype html>\n<html>\n<head>\n    <title>Example Domain</title>\n\n    <meta chars..."
+(def http-demo ((o url "https://news.ycombinator.com") (o filename))
+  (aand (fetch url binary: t)
+        (if filename
+            (do (savebytes it!body filename)
+                (ero "Saved" (len it!body) "bytes to" filename))
+            (do (each (k v) it!headers
+                  (ero k ": " v sep: ""))
+                (ero)
+                (writebytes it!body)))))
+
+http-demo
+
+; Print an image to the terminal:
+;
+;   $ imgcat <(bin/arc http.arc https://sep.yimg.com/ay/paulgraham/index-1.gif)
+;
+; Fetch hn:
+;
+;   $ bin/arc http.arc https://news.ycombinator.com
+;
+; Extract urls from hn's html
+; 
+;   $ bin/arc http.arc https://news.ycombinator.com | rg '"(http.*?)"' -o
