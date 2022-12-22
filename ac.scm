@@ -763,6 +763,11 @@
                      x)))
         args))
 
+(define (ac-expand-local var (val 'nil) . body)
+  (set! var (ac-expand-args var))
+  (set! val (ac-macex val))
+  `(,var ,val ,@(imap ac-macex body)))
+
 (define (ac-expand-function args body)
   (parameterize ((env* (env*)))
     `(,(ac-expand-args args)
@@ -823,12 +828,107 @@
                           form)
                          ((eq? x 'quasisyntax)
                           form)
+                         ((eq? x '%local)
+                          (cons x (apply ac-expand-local args)))
                          ((eq? x 'fn)
                           (cons x (ac-expand-function (car args) (cdr args))))
                          (#t `(,x ,@(imap ac-macex args))))))
                 ((null? form) form)
                 (#t
                  (ac-macex-atom form once))))))
+
+(define (ac-accum)
+  (let ((l (list)))
+    (lambda args
+      (cond ((null? args)
+             (let ((x (reverse l)))
+               (set! l (list))
+               x))
+            ((null? (cdr args))
+             (set! l (cons (car args) l))
+             l)
+            (#t
+             (set! l (cons args l))
+             l)))))
+
+(define (ac-lower-statement form (tail? #f))
+  (let* ((hoist (ac-accum))
+         (e (ac-lower form hoist #t tail?))
+         (hoist (hoist))
+         (expr (cond ((and (not (null? hoist))
+                           (not (ar-nil? e)))
+                      `(%do ,@hoist ,e))
+                     ((not (ar-nil? e))
+                      e)
+                     (#t (ar-xcar hoist)))))
+    (if (ar-nil? expr) '(%do) expr)))
+
+(define (ac-lower-body body tail?)
+  (ac-lower-statement `(%do ,@body) tail?))
+
+(define (ac-standalone? form)
+  (not (null? form)))
+
+(define (ac-lower-do args hoist stmt? tail?)
+  (for-each (lambda (x)
+              (let ((e (ac-lower x hoist stmt?)))
+                (when (ac-standalone? e)
+                  (hoist e))))
+            (reverse (ar-xcdr (reverse args))))
+  (let ((e (ac-lower (ar-xcar (reverse args)) hoist stmt? tail?)))
+    e))
+
+(define (ac-lower-definition kind args hoist stmt? tail?)
+  (let* ((name (car args))
+         (body (cddr args))
+         (args (cadr args))
+         (name (ac-lower name hoist)))
+    (hoist `(,kind ,name ,args ,@(if (null? body) body (list (ac-lower-body body #t)))))
+    (if (not (and stmt? (not tail?)))
+        name
+        '())))
+
+(define (ac-lower-function args)
+  (let* ((a (car args))
+         (body (cdr args)))
+    `(fn ,a ,(ac-lower-body body #t))))
+
+(define (ac-lower-call form hoist)
+  (map (lambda (x) (ac-lower x hoist)) form))
+
+(define (ac-statement? x)
+  #f)
+
+(define (ac-lower-special form hoist)
+  (let ((e (ac-lower-call form hoist)))
+    (unless (ar-nil? e)
+      (hoist e))
+    '()))
+
+(define (ac-lower form (hoist #f) (stmt? #f) (tail? #f))
+  (cond ((syntax? form)
+         (syn (ac-lower (datum form) hoist stmt? tail?) form))
+        ((null? form) form)
+        ((not hoist) (ac-lower-statement form))
+        ((not (pair? form)) form)
+        (#t
+         (let ((x (car form))
+               (args (cdr form)))
+           (cond ((eq? x 'quasiquote)
+                  (ac-qq args (lambda (v) (ac-lower v hoist stmt? tail?))))
+                 ((eq? x 'quote) form)
+                 ((eq? x 'syntax) form)
+                 ((eq? x 'quasisyntax) form)
+                 ((eq? x '%do)
+                  (ac-lower-do args hoist stmt? tail?))
+                 ((eq? x '%local)
+                  (ac-lower-definition '%local args hoist stmt? tail?))
+                 ((eq? x 'fn)
+                  (ac-lower-function args))
+                 ((ac-statement? x)
+                  (ac-lower-special form hoist))
+                 (#t
+                  (ac-lower-call form hoist)))))))
 
 ; is v lexically bound?
 
