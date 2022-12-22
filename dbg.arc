@@ -153,8 +153,6 @@
 ;  (map pp fulltrace.c)
 ;  c)
 
-(assign dbgerr debugger:tlerr)
-
 (assign prnred prn)
 (assign prnblue prn)
 
@@ -210,4 +208,5 @@
                              (dbg-prn lenv retexpr)))
                        (self)))))))))))))
 
+(assign dbgerr debugger:tlerr)
 

@@ -89,6 +89,7 @@
         ((literal? s) (ac-literal s))
         ((ssyntax? s) (ac (expand-ssyntax s)))
         ((symbol? s) (ac-var-ref s))
+        ((car? s '%compiled) (cadr s))
         ((car? s '%do) (ac-do (cdr s)))
         ((car? s 'lexenv) (ac-lexenv))
         ((car? s 'syntax) (cadr s))
@@ -341,25 +342,25 @@
 
 ; quasiquote
 
-(define (ac-qq args)
-  (list 'quasiquote (ac-qq1 1 args)))
+(define (ac-qq args (f ac))
+  (list 'quasiquote (ac-qq1 1 args f)))
 
 ; process the argument of a quasiquote. keep track of
 ; depth of nesting. handle unquote only at top level (level = 1).
 ; complete form, e.g. x or (fn x) or (unquote (fn x))
 
-(define (ac-qq1 level x)
+(define (ac-qq1 level x f)
   (cond ((= level 0)
-         (ac x))
+         (f x))
         ((car? x 'unquote)
-         (list 'unquote (ac-qq1 (- level 1) (cadr x))))
+         (list 'unquote (ac-qq1 (- level 1) (cadr x) f)))
         ((and (car? x 'unquote-splicing) (= level 1))
          (list 'unquote-splicing
-               (ac-qq1 (- level 1) (cadr x))))
+               (ac-qq1 (- level 1) (cadr x) f)))
         ((car? x 'quasiquote)
-         (list 'quasiquote (ac-qq1 (+ level 1) (cadr x))))
+         (list 'quasiquote (ac-qq1 (+ level 1) (cadr x) f)))
         ((pair? x)
-         (imap (lambda (x) (ac-qq1 level x)) x))
+         (imap (lambda (x) (ac-qq1 level x f)) x))
         (#t (ac-quoted x))))
 
 ; quasisyntax
@@ -391,6 +392,12 @@
          (cons (f (car l)) (imap f (cdr l))))
         ((null? l)
          '())
+        (#t (f l))))
+
+(define (imemf f l)
+  (cond ((pair? l)
+         (or (f (car l)) (imemf f (cdr l))))
+        ((null? l) #f)
         (#t (f l))))
 
 ; (if) -> nil
@@ -566,7 +573,7 @@
 (define (ac-setn x)
   (if (null? x)
       '()
-      (cons (ac-set1 (ac-macex (car x)) (cadr x))
+      (cons (ac-set1 (ac (car x)) (cadr x))
             (ac-setn (cddr x)))))
 
 ; trick to tell Scheme the name of something, so Scheme
@@ -686,29 +693,27 @@
 (define direct-calls #f)
 
 (define (ac-call fn args)
-  (let ((macfn (ac-macro? fn)))
-    (cond (macfn
-           (ac-mac-call macfn args))
-          ((car? fn 'fn)
-           `(,(ac fn) ,@(ac-args (cadr fn) args)))
-          ((and direct-calls (symbol? fn) (not (lex? fn)) (bound? fn)
-                (procedure? (bound? fn)))
-           (ac-global-call fn args))
-          ((memf keywordp args)
-           `(,(ac fn) ,@(map ac args)))
-          ((= (length args) 0)
-           `(ar-funcall0 ,(ac fn) ,@(map ac args)))
-          ((= (length args) 1)
-           `(ar-funcall1 ,(ac fn) ,@(map ac args)))
-          ((= (length args) 2)
-           `(ar-funcall2 ,(ac fn) ,@(map ac args)))
-          ((= (length args) 3)
-           `(ar-funcall3 ,(ac fn) ,@(map ac args)))
-          ((= (length args) 4)
-           `(ar-funcall4 ,(ac fn) ,@(map ac args)))
-          (#t
-           `(ar-apply ,(ac fn)
-                      (list ,@(map ac args)))))))
+  ; (pp `(ac-call (,fn ,@args)))
+  (cond ((car? fn 'fn)
+         `(,(ac fn) ,@(ac-args (cadr fn) args)))
+        ((and direct-calls (symbol? fn) (not (lex? fn)) (bound? fn)
+              (procedure? (ar-bound fn)))
+         (ac-global-call fn args))
+        ((memf keywordp args)
+         `(,(ac fn) ,@(map ac args)))
+        ((= (length args) 0)
+         `(ar-funcall0 ,(ac fn) ,@(map ac args)))
+        ((= (length args) 1)
+         `(ar-funcall1 ,(ac fn) ,@(map ac args)))
+        ((= (length args) 2)
+         `(ar-funcall2 ,(ac fn) ,@(map ac args)))
+        ((= (length args) 3)
+         `(ar-funcall3 ,(ac fn) ,@(map ac args)))
+        ((= (length args) 4)
+         `(ar-funcall4 ,(ac fn) ,@(map ac args)))
+        (#t
+         `(ar-apply ,(ac fn)
+                    (list ,@(map ac args))))))
 
 (define (unzip-list l (vals '()) (keys '()))
   (cond ((null? l) (list (reverse vals) (reverse keys)))
@@ -719,35 +724,111 @@
              (unzip-list (cddr l) vals (cons (list (keywordp (car l)) (cadr l)) keys))))
         (#t (unzip-list (cdr l) (cons (car l) vals) keys))))
 
-(define (ac-mac-call m args)
+(define (ar-call f . args)
   (let* ((it (unzip-list args))
          (args (car it))
-         (kwargs (cadr it))
-         (expr (keyword-apply m (map car kwargs) (map cadr kwargs) args)))
-    (ac expr)))
+         (kwargs (cadr it)))
+    (keyword-apply f (map car kwargs) (map cadr kwargs) args)))
+
+(define (ac-mac-call m args)
+  (apply ar-call (car m) args))
 
 ; returns #f or the macro function
 
-(define (ac-macro? fn (kind 'mac))
-  (if (symbol? fn)
-      (let ((v (bound? fn)))
-        (if (and v
-                 (ar-tagged? v)
-                 (eq? (ar-type v) kind))
-            (ar-rep v)
-            #f))
-      #f))
+(define (ac-value? x (kind 'mac))
+  (let ((v (ar-bound x)))
+    (and v
+         (eq? (ar-type v) kind)
+         (list (ar-rep v)))))
+
+(define (ac-macro? x)
+  (ac-value? x 'mac))
+
+(define (ac-expand-macro m args (once #f))
+  (let* ((expr (ac-mac-call m args)))
+    (cond (once expr)
+          ((car? expr '%expansion)
+           (cadr expr))
+          (#t (ac-macex expr)))))
+
+(define (ac-expand-opt form)
+  (ac-env! (cadr form))
+  `(,(car form) ,(cadr form) ,@(imap ac-macex (cddr form))))
+
+(define (ac-expand-args args)
+  (imap (lambda (x)
+          (if (car? x 'o)
+              (ac-expand-opt x)
+              (begin (ac-env! x)
+                     x)))
+        args))
+
+(define (ac-expand-function args body)
+  (parameterize ((env* (env*)))
+    `(,(ac-expand-args args)
+      ,@(imap ac-macex body))))
+
+(define (ac-alias? x)
+  (ac-value? x 'alias))
+
+(define (ac-alias x)
+  (car (ac-alias? x)))
+
+(define (ac-expand-compose form (once #f))
+  (let* ((expr (decompose (cdar form) (cdr form))))
+    (if once expr (ac-macex expr))))
+
+(define (ac-expand-complement form (once #f))
+  (let* ((x (cadar form))
+         (args (cdr form))
+         (expr (if (car? x 'complement)
+                   `(,(cadr x) ,@args)
+                   `(no (,x ,@args)))))
+    (if once expr (ac-macex expr))))
 
 ; macroexpand the outer call of a form as much as possible
 
-(define (ac-macex e . once)
-  (if (pair? e)
-      (let ((m (ac-macro? (car e))))
-        (if m
-            (let ((expansion (apply m (cdr e))))
-              (if (null? once) (ac-macex expansion) expansion))
-            e))
-      e))
+(define (ac-expand-atom form (once #f))
+  (cond ((ssyntax? form)
+         (expand-ssyntax form))
+        ; ((ac-alias? form)
+        ;  (ac-alias form))
+        (#t form)))
+
+(define (ac-macex-atom form (once #f))
+  (let ((it (ac-expand-atom form)))
+    (if (or once (eq? it form)) it (imap ac-macex-atom it))))
+
+(define (ac-macex form (once #f))
+  (if (syntax? form)
+      (syn (ac-macex (syntax->datum form) once) form)
+      (begin
+        ; (pp `(ac-macex ,form))
+        ; (pp
+          (cond ((pair? form)
+                 (let* ((x (ac-macex (car form)))
+                        (args (cdr form))
+                        (form `(,x ,@args))
+                        (m (ac-macro? x)))
+                   (cond (m
+                          (ac-expand-macro m args once))
+                         ((car? x 'compose)
+                          (ac-expand-compose form once))
+                         ((car? x 'complement)
+                          (ac-expand-complement form once))
+                         ((eq? x 'quote) form)
+                         ((eq? x 'quasiquote)
+                          (ac-qq (car args) ac-macex))
+                         ((eq? x 'syntax)
+                          form)
+                         ((eq? x 'quasisyntax)
+                          form)
+                         ((eq? x 'fn)
+                          (cons x (ac-expand-function (car args) (cdr args))))
+                         (#t `(,x ,@(imap ac-macex args))))))
+                ((null? form) form)
+                (#t
+                 (ac-macex-atom form once))))))
 
 ; is v lexically bound?
 
@@ -1426,7 +1507,7 @@
 (define (arc-eval expr (lexenv #f))
   (if lexenv
       (arc-eval-boxed expr lexenv)
-      (seval (ac expr))))
+      (seval (ac (ac-macex expr)))))
 
 (define (arc-eval-boxed expr lexenv)
   (parameterize ((boxed* (if (or (ar-false? (boxed*))
@@ -1456,7 +1537,7 @@
     (let ((stx (read-syntax src in)))
       (if (eof-object? stx) stx
           (begin (ac-that-expr* stx)
-                 (ac stx))))))
+                 (ac (ac-macex stx)))))))
 
  (define (ac-prompt-read)
    (if (syntax? (ac-that-expr*))
@@ -1530,7 +1611,7 @@
   (let ((x (sread ip)))
     (if (eof-object? x)
         #t
-        (let ((scm (ac x)))
+        (let ((scm (ac (ac-macex x))))
           (eval scm)
           (pp (datum scm) op)
           (newline op)
@@ -1646,13 +1727,18 @@
 ; rewrite to pass a (true) gensym instead of #f in case var bound to #f
 
 (define (bound? arcname (fail #f))
-  (let ((it (namespace-variable-value (ac-global-name arcname)
-                                      #t
-                                      (lambda () undefined))))
-    (if (eq? it undefined) fail it)))
+  (and (symbol? arcname)
+       (let* ((undef (list 'undef))
+              (it (namespace-variable-value (ac-global-name arcname)
+                                            #t
+                                            (lambda () undef))))
+         (if (eq? it undef) #f (list it)))))
 
-(xdef bound (lambda (x (fail ar-nil))
-              (bound? x fail)))
+(define (ar-bound x (fail ar-nil))
+  (let ((v (bound? x)))
+    (if v (car v) fail)))
+
+(xdef bound ar-bound)
 
 (xdef newstring make-string)
 

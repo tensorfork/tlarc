@@ -46,6 +46,13 @@
 (def tag: mac mac (name parms . body)
   `(def tag: mac ,name ,parms ,@body))
 
+(mac when-compiling body
+  (eval `(%do ,@body)))
+
+(mac during-compilation body
+  (eval `(%do ,@body))
+  `(%do ,@body))
+
 (def caar (xs) (car (car xs)))
 (def cadr (xs) (car (cdr xs)))
 (def cddr (xs) (cdr (cdr xs)))
@@ -140,20 +147,31 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
 ; Only used when the call to compose doesn't occur in functional position.  
 ; Composes in functional position are transformed away by ac.
 
-(mac compose args
-  (let g (uniq 'compose)
-    `(fn ,g
-       ,((afn (fs)
-           (if (cdr fs)
-               (list (car fs) (self (cdr fs)))
-               `(apply ,(if (car fs) (car fs) 'idfn) ,g)))
-         args))))
+;(mac compose args
+;  (let g (uniq 'compose)
+;    `(fn ,g
+;       ,((afn (fs)
+;           (if (cdr fs)
+;               (list (car fs) (self (cdr fs)))
+;               `(apply ,(if (car fs) (car fs) 'idfn) ,g)))
+;         args))))
+
+(def compose fns
+  (fn args
+    ((afn ((f . fs))
+       (if fs
+           (f (self fs))
+           (apply f args)))
+     fns)))
 
 ; Ditto: complement in functional position optimized by ac.
 
-(mac complement (f)
-  (let g (uniq 'complement)
-    `(fn ,g (no (apply ,f ,g)))))
+;(mac complement (f)
+;  (let g (uniq 'complement)
+;    `(fn ,g (no (apply ,f ,g)))))
+
+(def complement (f)
+  (fn args (no (apply f args))))
 
 (def rev (xs) 
   ((afn (xs acc)
