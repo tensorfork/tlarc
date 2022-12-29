@@ -22,6 +22,30 @@
 ;  lists of chars
 
 
+(assign kwproc (%fn (f)
+                 (make-keyword-procedure
+                   (%fn (ks vs . args)
+                     (apply f (+ args (apply + (#'map #'list ks vs)))))
+                   (%fn args (apply f args)))))
+
+;(assign environment* (make-param (#'list (table)) #f 'environment*))
+
+;(assign fn (annotate 'mac
+;             (%fn args
+;               (call-w/param environment* (cons (table) (environment*))
+;                    (%fn () `(%compiled ,(ac `(%fn ,@args))))))))
+
+(assign %let (annotate 'mac
+               (%fn (var val . body)
+                 `((%fn (,var) ,@body)
+                   ,val))))
+
+(assign if (annotate 'mac
+             (%fn args `(%if ,@(#'map (%fn (x) `((%fn () ,x))) args)))))
+
+(assign fn (annotate 'mac
+             (%fn args `(%fn ,@args))))
+
 (assign do (annotate 'mac
              (fn args `(%do ,@args))))
 
@@ -33,18 +57,43 @@
 
 (assign safeset (annotate 'mac
                   (fn (var val)
-                    `(do (warnset ',var)
-                         (assign ,var ,val)))))
+                    (assign val (call-w/scope (fn ()
+                                                (ac-dbname! var)
+                                                (ac val))))
+                    (if (lex? var)
+                        `(assign ,var #',val)
+                        (> (len (environment*)) 1)
+                        `#'(begin (define ,(ac-env! var) ,val) ,var)
+                      `(do (warnset ',var)
+                           (assign ,var #',val))))))
 
 (assign def (annotate 'mac
-               (fn (tag: (o kind) name parms . body)
-                 (if body
-                     `(def tag: ,kind ,name (do (sref sig ',parms ',name)
-                                                (fn ,parms ,@body)))
-                     `(safeset ,name ,(if kind `(annotate ',kind ,parms) parms))))))
+              (fn (:tag name x . body)
+                (if body (assign x
+                                 (if (#'or (lex? name)
+                                      (> (len (environment*)) 1))
+                                     `(fn ,x ,@body)
+                                     `(do (sref sig ',x ',name)
+                                          (fn ,x ,@body)))))
+                `(safeset ,name ,(if tag `(annotate ',tag ,x) x)))))
+
+(def stash (make-keyword-procedure
+             (fn (ks vs . args)
+               (+ args (apply + (map list ks vs))))
+             (fn args args)))
 
 (def tag: mac mac (name parms . body)
   `(def tag: mac ,name ,parms ,@body))
+
+(mac with (var val . body)
+  `(let ,var ,val ,@body ,var))
+
+(mac when-compiling body
+  (eval `(%do ,@body)))
+
+(mac during-compilation body
+  (with expr `(%do ,@body)
+    (eval expr)))
 
 (def caar (xs) (car (car xs)))
 (def cadr (xs) (car (cdr xs)))
@@ -52,6 +101,8 @@
 
 (def no (x) (is x nil))
 (def yes (x) (if x true false))
+
+(def ok (x) (no (id x unset)))
 
 (def acons (x) (is (type x) 'cons))
 
@@ -71,20 +122,25 @@
 
 (def idfn (x) x)
 
+(def consif (x y (o :test idfn))
+  (if (test x) (cons x y) y))
+
 ; Maybe later make this internal.  Useful to let xs be a fn?
 
 (def map1 (f xs)
   (if (no xs) 
       nil
-      (cons (f (car xs)) (map1 f (cdr xs)))))
+      (consif test: ok
+              (f (car xs))
+              (map1 f (cdr xs)))))
 
-(def hug (xs (o f list))
-  (if (no xs)
-       nil
-      (no (cdr xs))
-       (list (list (car xs)))
-      (cons (f (car xs) (cadr xs))
-            (hug (cddr xs) f))))
+(def hug (xs)
+  (if xs
+      (cons (if (cdr xs)
+                (list (car xs) (cadr xs))
+                (list (car xs)))
+            (hug (cddr xs)))
+      nil))
 
 (mac dbg ((o expr 'nil))
   `(debugger (lexenv) ',expr))
@@ -113,27 +169,30 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
        (car al)
       (assoc key (cdr al))))
 
-(def alref (al key) (cadr (assoc key al)))
+(def alref (al key (o fail))
+  (let v (assoc key al)
+    (if v (cadr v) fail)))
 
-(mac let (var val . body)
-  `((fn (,var) ,@body)
-    ,val))
+(mac let (:atomic var val . body)
+  (if atomic
+      `(atomic (let ,var ,val ,@body))
+      `((fn (,var) ,@body)
+        ,val)))
 
-(mac withs (parms . body)
-  (if (no parms) 
+(mac withs (:atomic parms . body)
+  (if atomic
+      `(atomic (withs ,parms ,@body))
+      (no parms) 
       `(do ,@body)
       `(let ,(car parms) ,(cadr parms) 
          (withs ,(cddr parms) ,@body))))
 
-; Need rfn for use in macro expansions.
-
-(mac rfn (name parms . body)
+(mac afn ((o :name 'self) parms . body)
   `(let ,name nil
      (assign ,name (fn ,parms ,@body))))
 
-(mac afn (parms . body)
-  `(let self nil
-     (assign self (fn ,parms ,@body))))
+(mac rfn (name parms . body)
+  `(afn name: ,name ,parms ,@body))
 
 ; Ac expands x:y:z into (compose x y z), ~x into (complement x)
 
@@ -179,25 +238,10 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
 
 (def alist (x) (or (no x) (is (type x) 'cons)))
 
-(mac in (x . choices)
+(mac in ((o :test 'is) x . choices)
   (w/uniq g
     `(let ,g ,x
-       (or ,@(map1 (fn (c) `(is ,g ,c)) choices)))))
-
-; Could take n args, but have never once needed that.
-
-(def iso (x y)
-  (or (is x y)
-      (and (acons x) 
-           (acons y) 
-           (iso (car x) (car y)) 
-           (iso (cdr x) (cdr y)))))
-
-(mac when (test . body)
-  `(if ,test (do ,@body)))
-
-(mac unless (test . body)
-  `(if (no ,test) (do ,@body)))
+       (or ,@(map1 (fn (c) `(,test ,g ,c)) choices)))))
 
 (mac point (name . body)
   (w/uniq (g p)
@@ -208,6 +252,36 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
 
 (mac catch body
   `(point throw ,@body))
+
+; Could take n args, but have never once needed that.
+
+(def iso ((o :test is) . args)
+  (if (no (cdr args)) t
+      (all isa!table args)
+      (let (x . args) args
+        (catch
+          (maptable (fn (k v)
+                      (or (all [do (iso :test v (_ k))] args)
+                          (throw)))
+                    x)
+          t))
+       ;(apply iso :test (map [if a!table (tablist _) _] args) )
+      (some atom args)
+       (all [test _ (car args)] (cdr args))
+    (and (apply iso :test (map car args))
+         (apply iso :test (map cdr args)))))
+
+;  (or (test x y)
+;      (and (acons x) 
+;           (acons y) 
+;           (iso (car x) (car y) :test) 
+;           (iso (cdr x) (cdr y) :test))))
+
+(mac when (test . body)
+  `(if ,test (do ,@body)))
+
+(mac unless (test . body)
+  `(if (no ,test) (do ,@body)))
 
 (mac while (test . body)
   (w/uniq (gf gp)
@@ -238,25 +312,28 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
 ; and all probably should.
 
 (def some (test seq)
-  (let f (testify test)
-    (if (alist seq)
-        (reclist f:car seq)
-        (recstring f:seq seq))))
+  (def f (testify test))
+  (if (alist seq)
+      (reclist f:car seq)
+      (recstring f:seq seq)))
 
 (def all (test seq) 
   (~some (complement (testify test)) seq))
        
 (def mem (test seq)
-  (let f (testify test)
-    (reclist [if (f:car _) _] seq)))
+  (def f (testify test))
+  (reclist [if (f:car _) _] seq))
 
 (def find (test seq)
-  (let f (testify test)
-    (if (alist seq)
-        (reclist   [if (f:car _) (car _)] seq)
-        (recstring [if (f:seq _) (seq _)] seq))))
+  (def f (testify test))
+  (if (alist seq)
+      (reclist   [if (f:car _) (car _)] seq)
+      (recstring [if (f:seq _) (seq _)] seq)))
 
-(def isa (x y) (is (type x) y))
+(def isa (x (o y))
+  (if y
+      (is (type x) y)
+      [is (type _) x]))
 
 ; Possible to write map without map1, but makes News 3x slower.
 
@@ -272,7 +349,7 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
 
 
 (def map (f . seqs)
-  (if (some [isa _ 'string] seqs) 
+  (if (some isa!string seqs) 
        (withs (n   (apply min (map len seqs))
                new (newstring n))
          ((afn (i)
@@ -286,8 +363,9 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
       ((afn (seqs)
         (if (some no seqs)  
             nil
-            (cons (apply f (map1 car seqs))
-                  (self (map1 cdr seqs)))))
+            (consif test: ok
+                    (apply f (map1 car seqs))
+                    (self (map1 cdr seqs)))))
        seqs)))
 
 (def mappend (f . args)
@@ -314,7 +392,7 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
 ; If ok to do with =, why not with def?  But see if use it.
 
 (mac defs args
-  `(do ,@(map [cons 'def _] (tuples args 3))))
+  `(do ,@(map [cons 'def _] (tuples args 2))))
 
 (def caris (x val) 
   (and (acons x) (is (car x) val)))
@@ -328,10 +406,10 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
   `(atomic-invoke (fn () ,@body)))
 
 (mac atlet args
-  `(atomic (let ,@args)))
+  `(let atomic: t ,@args))
   
 (mac atwiths args
-  `(atomic (withs ,@args)))
+  `(withs atomic: t ,@args))
 
 
 ; setforms returns (vars get set) for a place based on car of an expr
@@ -453,20 +531,19 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
   (expand=list args))
 
 (mac or= args
-  `(do ,@(map [cons 'or-assign _] (hug args))))
-
-(mac or-assign (slot value)
-  `(atomic
-     ,(if (ssyntax slot)
-          `(or-assign ,(ssexpand slot) ,value)
-          (or (alist slot) (lex? slot))
-          `(or ,slot (= ,slot ,value))
-        `(or (if (bound ',slot) ,slot) (= ,slot ,value)))))
+  `(do ,@(map (fn ((slot value))
+                (= slot (ssexpand slot))
+                `(atomic
+                   (or ,(if (or (alist slot) (lex? slot))
+                            slot
+                            `(bound ',slot))
+                       (= ,slot ,value))))
+              (hug args))))
 
 (mac loop (start test update . body)
   (w/uniq (gfn gparm)
     `(do ,start
-         ((rfn ,gfn (,gparm) 
+         ((rfn ,gfn (,gparm)
             (if ,gparm
                 (do ,@body ,update (,gfn ,test))))
           ,test))))
@@ -490,7 +567,7 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
   (w/uniq gacc
     `(withs (,gacc nil ,accfn (fn args
                                 (let n (len args)
-                                  (if (is n 0) (atomic:do1 (rev ,gacc) (wipe ,gacc))
+                                  (if (is n 0) (atomic:do1 (rev ,gacc) (= ,gacc nil))
                                       (is n 1) (push (car args) ,gacc)
                                                (push args ,gacc)))))
        ,@body
@@ -498,21 +575,31 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
 
 ; could bind index instead of gensym
 
-(mac each (var expr . body)
-  (w/uniq (gseq gf gv)
+(mac each (var expr (o :key) . body)
+  (w/uniq (gseq gf gk)
     `(accum out
        (let ,gseq ,expr
-         (if (alist ,gseq)
-              ((rfn ,gf (,gv)
-                 (when (acons ,gv)
-                   (let ,var (car ,gv) ,@body)
-                   (,gf (cdr ,gv))))
-               ,gseq)
-             (isa ,gseq 'table)
-              (maptable (fn ,var ,@body)
-                        ,gseq)
-              (for ,gv 0 (- (len ,gseq) 1)
-                (let ,var (,gseq ,gv) ,@body)))))))
+         (let ,gf (fn ,(listify var) ,@body unset)
+           (if (isa ,gseq 'table)
+               (maptable ,gf ,gseq)
+               (ar-map ,@(if key `(key: ,key))
+                       ,(if (and (no key) (acons var))
+                            `[apply ,gf _]
+                            gf)
+                       ,gseq)))))))
+  ;(w/uniq (gseq gf gv)
+  ;     (let ,gseq ,expr
+  ;       (if (alist ,gseq)
+  ;            ((rfn ,gf (,gv)
+  ;               (when (acons ,gv)
+  ;                 (let ,var (car ,gv) ,@body)
+  ;                 (,gf (cdr ,gv))))
+  ;             ,gseq)
+  ;           (isa ,gseq 'table)
+  ;            (maptable (fn ,var ,@body)
+  ;                      ,gseq)
+  ;            (for ,gv 0 (- (len ,gseq) 1)
+  ;              (let ,var (,gseq ,gv) ,@body)))))))
 
 (def clamp (x a b)
   (if (< x a) a
@@ -522,18 +609,18 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
 ; (nthcdr x y) = (cut y x).
 
 (def cut (seq (o start) (o end))
-  (withs (n (len seq)
-          end (clamp (if (no end)   n
-                         (< end 0)  (+ n end)
-                         end)
-                     0 n)
-          start (clamp (if (no start)  0
-                           (< start 0) (+ n start)
-                           start)
-                       0 n))
-      (if (isa seq 'string)
-          (#'substring seq start end)
-          (firstn (- end start) (nthcdr start seq)))))
+  (defs n (len seq)
+        end (clamp (if (no end)   n
+                       (< end 0)  (+ n end)
+                       end)
+                   0 n)
+        start (clamp (if (no start)  0
+                         (< start 0) (+ n start)
+                         start)
+                     0 n))
+  (if (isa seq 'string)
+      (#'substring seq start end)
+      (firstn (- end start) (nthcdr start seq))))
       
 (mac whilet (var test . body)
   (w/uniq (gf gp)
@@ -601,13 +688,13 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
 ; but can't insert objects into expansions in Mzscheme.
 
 (mac caselet (var expr . args)
-  (let ex (afn (args)
-            (if (no (cdr args)) 
-                (car args)
-                `(if (mem ,var '(,@(listify (car args))))
-                     ,(cadr args)
-                     ,(self (cddr args)))))
-    `(let ,var ,expr ,(ex args))))
+  (def self (args)
+    (if (no (cdr args)) 
+        (car args)
+        `(if (mem ,var '(,@(listify (car args))))
+             ,(cadr args)
+             ,(self (cddr args)))))
+  `(let ,var ,expr ,(self args)))
 
 (mac case (expr . args)
   `(caselet ,(uniq) ,expr ,@args))
@@ -706,37 +793,35 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
 ; as lists of chars annotated with 'string, and modify car and cdr to get
 ; the rep of these.  That would also require hacking the reader.  
 
-(def pr (file: (o file (stdout))
-         sep: (o sep "")
-         end: (o end "")
-         flush: (o flush)
-         . args)
-  (let c ""
-    (map1 [do (disp c file) (disp _ file) (= c sep)]
-          args)
-    (disp end file)
-    (if flush (flushout file)))
+(def pr (:file :flush :sep :end . args)
+  (or= sep ""
+       file (stdout))
+  (def c "")
+  (map1 [do (disp c file)
+            (disp _ file)
+            (= c sep)]
+        args)
+  (if end (disp end file))
+  (if flush (flushout file))
   (car args))
 
-(def prt (file: (o file (stdout))
-          sep: (o sep "")
-          end: (o end "")
-          flush: (o flush)
-          . args)
-  (apply pr (keep idfn args) file: file sep: sep end: end flush: flush)
+(def prt (:file :flush :sep :end . args)
+  (apply pr (keep idfn args) :file :flush :sep :end)
   (car args))
 
-(def prn (file: (o file (stdout)) sep: (o sep "") flush: (o flush) . args)
-  (apply pr args end: #\newline sep: sep file: file flush: flush))
+(def prn (:file :flush :sep . args)
+  (apply pr args :file :flush :sep end: #\newline))
 
-(def prs (file: (o file (stdout)) end: (o end "") flush: (o flush) . args)
-  (apply pr args sep: #\space end: end file: file flush: flush))
+(def prs (:file :flush :end . args)
+  (apply pr args :file :flush :end sep: #\space))
 
 (mac wipe args
-  `(do ,@(map (fn (a) `(= ,a nil)) args)))
+  `(do ,@(each a args
+           (out `(= ,a nil)))))
 
 (mac set args
-  `(do ,@(map (fn (a) `(= ,a t)) args)))
+  `(do ,@(each (var (o val 't)) (hug args)
+           (out `(= ,var ,val)))))
 
 ; Destructuring means ambiguity: are pat vars bound in else? (no)
 
@@ -799,8 +884,6 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
 ;        (if (isa op 'mac)
 ;            (apply (rep op) (cdr e))
 ;            e))))
-
-(def consif (x y) (if x (cons x y) y))
 
 (def string args
   (apply + "" (map str args)))
@@ -988,14 +1071,13 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
 ; rejects bytes >= 248 lest digits be overrepresented
 
 (def rand-string (n)
-  (let c "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    (withs (nc 62 s (newstring n) i 0)
-      (while (< i n)
-        (let x (randb)
-           (unless (> x 247)
-             (= (s i) (c (mod x nc)))
-             (++ i))))
-      s)))
+  (defs c "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        nc 62 s (newstring n) i 0)
+  (while (< i n)
+    (let x (randb)
+      (unless (> x 247)
+        (= (s i) (c (mod x nc)))
+        (++ i)))))
 
 (def rand-char ()
   ((rand-string 1) 0))
@@ -1029,11 +1111,11 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
 
 (def most (f seq) 
   (unless (no seq)
-    (withs (wins (car seq) topscore (f wins))
+    (with wins (car seq)
+      (def topscore (f wins))
       (each elt (cdr seq)
-        (let score (f elt)
-          (if (> score topscore) (= wins elt topscore score))))
-      wins)))
+        (def score (f elt))
+        (if (> score topscore) (= wins elt topscore score))))))
 
 ; Insert so that list remains sorted.  Don't really want to expose
 ; these but seem to have to because can't include a fn obj in a 
@@ -1065,14 +1147,14 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
 ; right no of args and didn't have to call apply (or list if 1 arg).
 
 (def memo (f)
-  (withs (cache (table) nilcache (table))
-    (fn args
-      (or (cache args)
-          (and (no (nilcache args))
-               (aif (apply f args)
-                    (= (cache args) it)
-                    (do (set (nilcache args))
-                        nil)))))))
+  (defs cache (table) nilcache (table))
+  (fn args
+    (or (cache args)
+        (and (no (nilcache args))
+             (aif (apply f args)
+                  (= (cache args) it)
+                  (do (set (nilcache args))
+                      nil))))))
 
 
 (mac defmemo (name parms . body)
@@ -1122,9 +1204,8 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
        ,gc)))
 
 (def sum (f xs)
-  (let n 0
-    (each x xs (++ n (f x)))
-    n))
+  (with n 0
+    (each x xs (++ n (f x)))))
 
 (def treewise (f base tree)
   (if (atom tree)
@@ -1170,10 +1251,9 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
   (each kv h (out kv)))
 
 (def listtab (al)
-  (let h (table)
+  (with h (table)
     (map (fn ((k v)) (= (h k) v))
-         al)
-    h))
+         al)))
 
 (mac obj args
   `(listtab (list ,@(map (fn ((k v))
@@ -1199,21 +1279,18 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
   (write (unquoted (tablist h)) o))
 
 (def copy (x . args)
-  (let x2 (case (type x)
+  (with x2 (case (type x)
             sym    x
             cons   (copylist x) ; (apply (fn args args) x)
-            string (let new (newstring (len x))
+            string (with new (newstring (len x))
                      (forlen i x
-                       (= (new i) (x i)))
-                     new)
-            table  (let new (table)
+                       (= (new i) (x i))))
+            table  (with new (table)
                      (each (k v) x 
-                       (= (new k) v))
-                     new)
+                       (= (new k) v)))
                    (err "Can't copy " x))
-    (map (fn ((k v)) (= (x2 k) v))
-         (hug args))
-    x2))
+    (each (k v) (hug args)
+      (= (x2 k) v))))
 
 (def abs (n)
   (if (< n 0) (- n) n))
@@ -1223,17 +1300,17 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
 ; you only want the first.  Not a big problem.
 
 (def round (n)
-  (withs (base (trunc n) rem (abs (- n base)))
-    (if (> rem 1/2) ((if (> n 0) + -) base 1)
-        (< rem 1/2) base
-        (odd base)  ((if (> n 0) + -) base 1)
-                    base)))
+  (defs base (trunc n) rem (abs (- n base)))
+  (if (> rem 1/2) ((if (> n 0) + -) base 1)
+      (< rem 1/2) base
+      (odd base)  ((if (> n 0) + -) base 1)
+                  base))
 
 (def roundup (n)
-  (withs (base (trunc n) rem (abs (- n base)))
-    (if (>= rem 1/2) 
-        ((if (> n 0) + -) base 1)
-        base)))
+  (defs base (trunc n) rem (abs (- n base)))
+  (if (>= rem 1/2) 
+      ((if (> n 0) + -) base 1)
+      base))
 
 (def nearest (n quantum)
   (* (roundup (/ n quantum)) quantum))
@@ -1255,59 +1332,56 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
 ; by Eli Barzilay for MzLib; re-written in Arc.
 
 (def mergesort (less? lst)
-  (let n (len lst)
-    (if (<= n 1) lst
-        ; ; check if the list is already sorted
-        ; ; (which can be a common case, eg, directory lists).
-        ; (let loop ([last (car lst)] [next (cdr lst)])
-        ;   (or (null? next)
-        ;       (and (not (less? (car next) last))
-        ;            (loop (car next) (cdr next)))))
-        ; lst
-        ((afn (n)
-           (if (> n 2)
-                ; needs to evaluate L->R
-                (withs (j (/ (if (even n) n (- n 1)) 2) ; faster than round
+  (def n (len lst))
+  (if (<= n 1) lst
+      ; ; check if the list is already sorted
+      ; ; (which can be a common case, eg, directory lists).
+      ; (let loop ([last (car lst)] [next (cdr lst)])
+      ;   (or (null? next)
+      ;       (and (not (less? (car next) last))
+      ;            (loop (car next) (cdr next)))))
+      ; lst
+      ((afn (n)
+         (if (> n 2)
+              ; needs to evaluate L->R
+              (do (defs j (/ (if (even n) n (- n 1)) 2) ; faster than round
                         a (self j)
                         b (self (- n j)))
                   (merge less? a b))
-               ; the following case just inlines the length 2 case,
-               ; it can be removed (and use the above case for n>1)
-               ; and the code still works, except a little slower
-               (is n 2)
-                (withs (x (car lst) y (cadr lst) p lst)
+             ; the following case just inlines the length 2 case,
+             ; it can be removed (and use the above case for n>1)
+             ; and the code still works, except a little slower
+             (is n 2)
+              (do (defs x (car lst) y (cadr lst) p lst)
                   (= lst (cddr lst))
                   (when (less? y x) (scar p y) (scar (cdr p) x))
                   (scdr (cdr p) nil)
                   p)
-               (is n 1)
-                (withs (p lst)
-                  (= lst (cdr lst))
-                  (scdr p nil)
-                  p)
-               nil))
-         n))))
+             (is n 1)
+              (with p lst
+                (= lst (cdr lst))
+                (scdr p nil))
+             nil))
+       n)))
 
 ; Also by Eli.
 
 (def merge (less? x y)
   (if (no x) y
       (no y) x
-      (let lup nil
-        (assign lup
-                (fn (r x y r-x?) ; r-x? for optimization -- is r connected to x?
-                  (if (less? (car y) (car x))
-                    (do (if r-x? (scdr r y))
-                        (if (cdr y) (lup y x (cdr y) nil) (scdr y x)))
-                    ; (car x) <= (car y)
-                    (do (if (no r-x?) (scdr r x))
-                        (if (cdr x) (lup x (cdr x) y t) (scdr x y))))))
-        (if (less? (car y) (car x))
-          (do (if (cdr y) (lup y x (cdr y) nil) (scdr y x))
-              y)
-          ; (car x) <= (car y)
-          (do (if (cdr x) (lup x (cdr x) y t) (scdr x y))
-              x)))))
+      (do (def lup (r x y r-x?) ; r-x? for optimization -- is r connected to x?
+            (if (less? (car y) (car x))
+                (do (if r-x? (scdr r y))
+                    (if (cdr y) (lup y x (cdr y) nil) (scdr y x)))
+                ; (car x) <= (car y)
+                (do (if (no r-x?) (scdr r x))
+                    (if (cdr x) (lup x (cdr x) y t) (scdr x y)))))
+          (if (less? (car y) (car x))
+            (do (if (cdr y) (lup y x (cdr y) nil) (scdr y x))
+                y)
+            ; (car x) <= (car y)
+            (do (if (cdr x) (lup x (cdr x) y t) (scdr x y))
+                x)))))
 
 (def bestn (n f seq)
   (firstn n (sort f seq)))
@@ -1619,12 +1693,12 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
 (mac w/table (var . body)
   `(let ,var (table) ,@body ,var))
 
-(def ero (file: (o file (stderr))
-          sep: (o sep " ")
-          end: (o end #\newline)
-          flush: (o flush t)
+(def ero ((o :file (stderr))
+          (o :sep " ")
+          (o :end #\newline)
+          (o :flush t)
           . args)
-  (apply pr args file: file sep: sep end: end flush: flush)
+  (apply pr args :file :flush :sep :end)
   (car args))
 
 (def queue () (list nil nil 0))
