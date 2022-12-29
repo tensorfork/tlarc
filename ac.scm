@@ -604,6 +604,9 @@
          '())
         (#t (f l))))
 
+(define (ac-expr x)
+  (ac-do (list x) #:expr #t))
+
 ; (if) -> nil
 ; (if x) -> x
 ; (if t a ...) -> a
@@ -612,9 +615,9 @@
 
 (define (ac-if args)
   (cond ((null? args) (list 'quote ar-nil))
-        ((null? (cdr args)) (ac (car args)))
-        (#t `(if (ar-true? ,(ac (car args)))
-                 ,(ac (cadr args))
+        ((null? (cdr args)) (ac-expr (car args)))
+        (#t `(if (ar-true? ,(ac-expr (car args)))
+                 ,(ac-expr (cadr args))
                  ,(ac-if (cddr args))))))
 
 (define (ac-dbname! name (env (env*)))
@@ -816,12 +819,14 @@
       (list (list 'quote ar-nil))
       (ac-body body)))
 
-(define (ac-do body)
+(define (ac-do body #:expr (expr? #f))
   (let ((expr (ac-body* body)))
-    (cond ((= (length expr) 0)
-           '(begin))
-          ((= (length expr) 1)
+    (cond ((= (length expr) 1)
            (car expr))
+          ((and expr? (memf (lambda (v)
+                              (car? v 'define))
+                            expr))
+           `((lambda () ,@expr)))
           (#t `(begin ,@expr)))))
 
 ; (set v1 expr1 v2 expr2 ...)
@@ -1136,7 +1141,8 @@
       (eq? x undefined)))
 
 (define (ar-true? x)
-  (not (ar-false? x)))
+  (and (not (ar-false? x))
+       (or x (err "failed" x))))
 
 ; call a function or perform an array ref, hash ref, &c
 
@@ -1717,7 +1723,10 @@
 (define (arc-eval expr (lexenv #f))
   (if lexenv
       (arc-eval-boxed expr lexenv)
-      (seval (ac (if ac-verbose? (pp expr) expr)))))
+      (let ((form (ac (if ac-verbose? (pp expr) expr))))
+        (when ac-verbose?
+          (pp (datum form)))
+        (seval form))))
 
 (define (arc-eval-boxed expr lexenv)
   (parameterize ((boxed* (if (or (ar-false? (boxed*))

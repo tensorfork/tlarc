@@ -41,7 +41,7 @@
                    ,val))))
 
 (assign if (annotate 'mac
-             (%fn args `(%if ,@(#'map (%fn (x) `((%fn () ,x))) args)))))
+             (%fn args `(%if ,@args))))
 
 (assign fn (annotate 'mac
              (%fn args `(%fn ,@args))))
@@ -156,11 +156,13 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
   `(obj ,@body))
 
 (mac and args
-  (if args
-      (if (cdr args)
-          `(if ,(car args) (and ,@(cdr args)))
-          (car args))
-      't))
+  `(#'and ,@(map1 [do `(ar-true? ,_)]
+                  args)))
+  ;(if args
+  ;    (if (cdr args)
+  ;        `(if ,(car args) (and ,@(cdr args)))
+  ;        (car args))
+  ;    't))
 
 (def assoc (key al)
   (if (atom al)
@@ -231,10 +233,13 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
       `(let ,names (uniq ',names) ,@body)))
 
 (mac or args
-  (and args
-       (w/uniq g
-         `(let ,g ,(car args)
-            (if ,g ,g (or ,@(cdr args)))))))
+  `(#'or
+    ,@(map1 [do `(#'ar-true? ,_)]
+          args)))
+  ;(and args
+  ;     (w/uniq g
+  ;       `(let ,g ,(car args)
+  ;          (if ,g ,g (or ,@(cdr args)))))))
 
 (def alist (x) (or (no x) (is (type x) 'cons)))
 
