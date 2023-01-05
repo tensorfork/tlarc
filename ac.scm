@@ -36,17 +36,104 @@
 (define (caar? l (k undefined) #:test (test ar-id))
   (car? (car? l) k #:test test))
 
+(define (alist-member l k (fail #f) #:test (test ar-id))
+  (cond ((caar? l k #:test test)
+         (car l))
+        ((pair? l)
+         (alist-member (cdr l) k fail #:test test))
+        (#t fail)))
+
+(define (alist-get l k (fail #f) #:test (test ar-id))
+  (let ((v (alist-member l k #:test test)))
+    (if v (cadr v) fail)))
+
+(define (alist-set! l k v #:test (test ar-id))
+  (let ((p (alist-member l k #:test test)))
+    (if p
+        (scar (cdr p) v)
+        (scdr (last-pair l) (list (list k v))))
+    l))
+
+(define (plist-member l k (fail #f) #:test (test ar-id))
+  (cond ((car? l k #:test test)
+         l)
+        ((or (null? l)
+             (null? (cdr l)))
+         fail)
+        (#t (plist-member (cddr l) k fail #:test test))))
+
+(define (plist-get l k (fail #f) #:test (test ar-id))
+  (let ((v (plist-member l k #:test test)))
+    (if v (cadr v) fail)))
+
+(define (plist-set! l k v #:test (test ar-id))
+  (let ((p (plist-member l k #:test test)))
+    (if p
+        (scar (cdr p) v)
+        (scdr (last-pair l) (list k v)))
+    l))
+
 (define (ar-tagged type . rep)
+  ; (alist-set! (alist-set! (list 'lit) 'type type)
+  ;             type rep))
   `(lit ,type ,@rep))
 
 (define (ar-tagged? x)
   (car? x 'lit))
 
 (define (ar-tagged-type x)
+  ; (alist-get (cdr x) 'type))
   (cadr x))
 
 (define (ar-tagged-rep x)
+  ; (alist-get (cdr x) (ar-tagged-type x)))
   (caddr x))
+
+(define scope* (make-parameter (make-empty-namespace) #f 'scope))
+(define globe* (make-parameter (current-namespace) #f 'globe))
+
+(define (ar-set! l k v)
+  (cond ((namespace? l)
+         (namespace-set-variable-value! (ac-global-name k) v #t l))
+        (#t "Don't know how to set" l k v))
+  v)
+
+(define (ar-get l k (fail ar-nil))
+  (cond ((namespace? l)
+         (parameterize ((current-namespace l))
+           (bound? k fail 'scope*)))
+        (#t "Don't know how to get" l k v)))
+
+(define (symbol-plist x (fail '()))
+  (cond ((symbol? x)
+         (symbol-plist (ar-get (scope*) x) fail))
+        ((ar-tagged? x)
+         (cddr (cdr x)))
+        (#t fail)))
+
+(define (setplist x plist)
+  (cond ((symbol? x)
+         (let ((v (ar-get (scope*) x #f)))
+           (unless (ar-tagged? v)
+             (if v
+               (err "Can't set plist for non-plist named" x plist)
+               (set! v (ar-set! (scope*) x (ar-tagged 'sym ar-nil)))))
+           (setplist v plist)))
+        ((ar-tagged? x)
+         (scdr (cddr x) plist)
+         ; (pp `(setplist TKTK ,x))
+         x)
+        (#t (err "setplist: Expected a symbol" x plist))))
+
+(define (get symbol property (fail ar-nil))
+  (plist-get (symbol-plist symbol) property fail))
+
+(define (put symbol property value)
+  (let ((plist (symbol-plist symbol)))
+    (if (null? plist)
+        (setplist symbol (list property value))
+        (plist-set! plist property value)))
+  value)
 
 ; sread = scheme read. eventually replace by writing read
 
@@ -86,6 +173,7 @@
 ; need in order to decide whether set should create a global.
 
 (define (ac s)
+  (set! s (ac-macex s))
   (cond ((syntax? s) (syn (ac (syntax->datum s)) s))
         ((literal? s) (ac-literal s))
         ((ssyntax? s) (ac (expand-ssyntax s)))
@@ -737,10 +825,12 @@
 (define direct-calls #f)
 
 (define (ac-call fn args)
+  ; (pp `(ac-call ,fn ,args))
   (let ((args (ac-unflag-args args))
-        (macfn (ac-macro? fn)))
-    (cond (macfn
-           (ac (ac-mac-call macfn args)))
+        ;(macfn (ac-macro? fn))
+        )
+    (cond ;(macfn
+          ; (ac (ac-mac-call macfn args)))
           ((car? fn 'fn)
            `(,(ac fn) ,@(ac-args (cadr fn) args)))
           ((and direct-calls (symbol? fn) (not (lex? fn)) (bound? fn)
@@ -782,8 +872,14 @@
 ; returns #f or the macro function
 
 (define (ac-macro? fn (kind 'mac))
+  ; (pp `(ac-macro? ,fn))
+  ; (pp (namespace-mapped-symbols (scope*)))
   (if (symbol? fn)
-      (let ((v (bound? fn)))
+      (let ((v (parameterize ((current-namespace (scope*)))
+                 ; (bound? fn #f 'scope*)
+                 (bound? fn)
+                 )))
+      ; (let ((v (ar-get (scope*) fn #f)))
         (if (and v
                  (ar-tagged? v)
                  (eq? (ar-type v) kind))
@@ -798,7 +894,9 @@
       (let ((m (ac-macro? (car e))))
         (if m
             (let ((expansion (ac-mac-call m (cdr e))))
-              (if once expansion (ac-macex expansion)))
+              (if (car? expansion '%expansion)
+                  (cadr expansion)
+                (if once expansion (ac-macex expansion))))
             e))
       e))
 
@@ -1193,8 +1291,9 @@
 (xdef stderr current-error-port)
 
 (xdef call-w/param
-      (lambda (var val thunk)
-        (parameterize ((var val)) (thunk))))
+      (lambda (var val thunk . args)
+        (parameterize ((var val))
+          (ar-apply thunk args))))
 
 (xdef call-w/stdout
       (lambda (port thunk)
@@ -1696,11 +1795,19 @@
 
 ; rewrite to pass a (true) gensym instead of #f in case var bound to #f
 
-(define (bound? arcname (fail #f))
+(define (bound? arcname (fail #f) (parent #f))
   (let ((it (namespace-variable-value (ac-global-name arcname)
                                       #t
                                       (lambda () undefined))))
-    (if (eq? it undefined) fail it)))
+    (if (not (eq? it undefined)) it
+      (if (not parent) fail
+        (let* ((ns (if (symbol? parent) (bound? parent) parent))
+               (ns (if (procedure? ns) (ns) ns)))
+          (if ns
+              (parameterize ((current-namespace ns))
+                (bound? arcname fail parent))
+              fail))))))
+
 
 (xdef bound (lambda (x (fail ar-nil))
               (bound? x fail)))

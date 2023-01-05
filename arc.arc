@@ -21,30 +21,64 @@
 ;  not sure this is a mistake; strings may be subtly different from 
 ;  lists of chars
 
+(assign setenv (fn (name tag value)
+;#`(define (setenv name tag value) # doesn't work because args aren't added to env
+    (atomic-invoke
+        (fn ()
+          (ar-set! (scope*) name (setplist (annotate tag value)
+                                           (symbol-plist name)))))))
 
-(assign do (annotate 'mac
-             (fn args `(%do ,@args))))
+
+;(assign do (annotate 'mac
+(setenv 'do 'mac
+             (fn args `(%do ,@args)))
 
 (assign warnset (fn (var)
-                  (if (bound var)
-                      (do (disp "*** redefining " (stderr))
-                          (disp var (stderr))
-                          (disp #\newline (stderr))))))
+;#`(define (warnset var)
+    (if (bound var)
+          (do (disp "*** redefining " (stderr))
+              (disp var (stderr))
+              (disp #\newline (stderr))))))
 
-(assign safeset (annotate 'mac
+;(assign safeset (annotate 'mac
+(setenv 'safeset 'mac
                   (fn (var val)
                     (if (#'ac-lexname)
                         `(do (#'define ,(#'ac-env! var) ,val)
                              ,var)
                         `(do (warnset ',var)
-                             (assign ,var ,val))))))
+                             (assign ,var ,val)))))
 
-(assign def (annotate 'mac
+
+;(assign when-compiling (annotate 'mac
+(setenv 'when-compiling 'mac
+                         (fn body
+                           (eval `(%do ,@body))))
+
+;(assign def (annotate 'mac
+(setenv 'def 'mac
                (fn (:tag name parms . body)
                  (if body
-                     `(def tag: ,tag ,name (do (sref sig ',parms ',name)
+                     `(do (def tag: ,tag ,name (do ;(sref sig ',parms ',name)
+                                               (put ',name 'sig ',parms)
+                                               (put ',name ',(#'or tag 'fn) '(def tag: ,tag ,name ,parms ,@body))
                                                (fn ,parms ,@body)))
-                     `(safeset ,name ,(if tag `(annotate ',tag ,parms) parms))))))
+                          ;(put ',name 'sig ',parms)
+                          ;',name
+                          )
+                     tag
+                     ;(do ;(pp `(def tag: ,tag ,name ,parms ,@body))
+                         ;`(atomic-invoke
+                         ;   (fn ()
+                         ;     ((fn (,name)
+                         ;        (ar-set! (scope*) ',name ,name))
+                         ;      (setplist (annotate ',tag ,parms)
+                         ;                (symbol-plist ',name)))))
+                         `((fn (,name)
+                             (setenv ',name ',tag ,name))
+                           ,parms)
+                     (do ;(pp `(safeset ,name ,parms))
+                       `(safeset ,name ,parms)))))
 
 (def tag: mac mac (name parms . body)
   `(def tag: mac ,name ,parms ,@body))
@@ -61,6 +95,8 @@
 (def atom (x) (no (acons x)))
 
 (def list args args)
+
+(mac list args `(%expansion (list ,@args)))
 
 (def reduce (f xs)
   (if (no (cdr xs))
