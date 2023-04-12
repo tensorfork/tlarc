@@ -27,6 +27,11 @@
 ;arc> (w/values (values 1 2 3))
 ;'(1 2 3)
 
-(mac assert (test (o msg "Assertion failed") . args)
+(mac assert (test (o msg) . args)
+  (or= msg  "Assertion failed")
   `(unless ,test
-     (err (cat ,msg ":") ',test ,@args)))
+     (do (dbg ,test)
+         (err (cat ,msg ":") ',test ,@args))))
+
+(mac assert-is (a b (o msg) . args)
+  `(assert (is ,a ,b) ,msg ,@args))

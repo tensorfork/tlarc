@@ -16,7 +16,7 @@
         (apply + it)))
 
 (def mapcat (f seq . args)
-  (if (isa!fn f)
+  (if (callable f)
       (concat (apply map f seq args))
       (concat seq f)))
 

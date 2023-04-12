@@ -49,6 +49,9 @@
 (def tag: mac mac (name parms . body)
   `(def tag: mac ,name ,parms ,@body))
 
+(mac when-compiling body
+  (eval `(do ,@body)))
+
 (def caar (xs) (car (car xs)))
 (def cadr (xs) (car (cdr xs)))
 (def cddr (xs) (cdr (cdr xs)))
@@ -332,10 +335,16 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
       (cons (firstn n xs)
             (tuples (nthcdr n xs) n))))
 
+; This is a hack to ensure that (defs a 1 b 2) always creates local
+; vars inside a function, even if it's a toplevel unnamed function.
+(mac ensure-scope body
+  `(with ,(uniq) ((fn () ,@body))))
+
 ; If ok to do with =, why not with def?  But see if use it.
 
 (mac defs args
-  `(do ,@(map [cons 'def _] (hug args))))
+  `(ensure-scope
+     ,@(map [cons 'def _] (hug args))))
 
 (def caris (x val) 
   (and (acons x) (is (car x) val)))
@@ -1872,6 +1881,9 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
 
 (mac w/tmpfile (var val . body)
   `(call-w/tmpfile ,val (fn (,var) ,@body)))
+
+(def callable (x)
+  (in (type x) 'fn 'table))
 
 ; any logical reason I can't say (push x (if foo y z)) ?
 ;   eval would have to always ret 2 things, the val and where it came from

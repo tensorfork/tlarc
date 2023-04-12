@@ -22,6 +22,7 @@
      cookie->user* (safe-load-table cookfile*))
   (each (k v) cookie->user*
     (= (user->cookie* v) k))
+  (hook 'load-userinfo)
   t)
 
 (defhook reload-admins ()
@@ -211,7 +212,8 @@
   
 (def set-pw (pw (o user (get-user)))
   (= (hpasswords* user) (bcrypt pw (rand-salt)))
-  (save-table hpasswords* hpwfile*))
+  (save-table hpasswords* hpwfile*)
+  (hook 'set-pw pw user))
 
 (def hello-page ()
   (whitepage (prs "hello" (get-user) "at" (get-ip))))
