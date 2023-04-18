@@ -583,14 +583,18 @@
 ; ((o a)) -> (a)
 ; (a: b) -> (b)
 ; (a: (o b)) -> (b)
+; (:a) -> (a)
+; (a (b c) d) -> (a b c d)
 
 (define (ac-arglist a)
   (cond ((null? a) '())
-        ((symbol? a) (list a))
+        ((symbol? a) (list (or (ac-flag? a) a)))
         ((caar? a 'o)
-         (cons (cadar a) (ac-arglist (cdr a))))
+         (append (ac-arglist (cadar a))
+                 (ac-arglist (cdr a))))
         ((car? a keywordp) (ac-arglist (cdr a)))
-        (#t (cons (car a) (ac-arglist (cdr a))))))
+        (#t (append (ac-arglist (car a))
+                    (ac-arglist (cdr a))))))
 
 (define (ac-body body)
   (map ac body))
@@ -882,6 +886,8 @@
 (xdef eof eof)
 
 (xdef sig fn-signatures)
+
+(xdef arglist ac-arglist)
 
 (xdef quoted ac-quoted)
 
