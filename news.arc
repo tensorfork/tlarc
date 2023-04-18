@@ -374,7 +374,7 @@
     (writefile ids (+ newsdir* "topstories"))
     (hook 'save-topstories ids)))
 
-(defhook save-topstories ((o ids (ranked-stories)))
+(defhook save-topstories name: news ((o ids (ranked-stories)))
   (firebase-set "v0/topstories" ids))
 
 (def rank-stories (n consider scorefn)
@@ -919,7 +919,7 @@ function vote(node) {
        about     u!about
        submitted u!submitted))
 
-(defhook save-prof (u)
+(defhook save-prof name: news (u)
   (firebase-set "v0/user/@u!id" (user>json u)))
 
 (def user-page (subject)
@@ -1107,7 +1107,7 @@ function vote(node) {
 (def newstories (n)
   (retrieve n cansee stories*))
 
-(defhook create-story (s)
+(defhook create-story name: news (s)
   (let ids (w/param the-req* (table) ; TODO: turn this into a w/user macro
              (map !id (newstories 500)))
     (firebase-set "v0/newstories" ids)))
@@ -2272,7 +2272,7 @@ function suggestTitle() {
 (defop maxitem.json ()
   (write-json maxid*))
 
-(defhook maxid (n)
+(defhook maxid name: news (n)
   (firebase-set "v0/maxitem" maxid*))
 
 (def descendants (i)
@@ -2347,7 +2347,7 @@ function suggestTitle() {
              story_url      (tnull:if r s!url)
              _tags          (list (string i!type) "author_@i!by" "story_@s!id"))))))
 
-(defhook save-item (i)
+(defhook save-item name: news (i)
   (firebase-set "v0/item/@i!id" (item>json i))
   (whenlet s (superparent i)
     (algolia-set "Item_production" (item>search i))
@@ -3142,7 +3142,7 @@ first asterisk isn't whitespace.
 (def forgot-url ((o subject arg!acct))
   (if subject (+ "/forgot?acct=" (eschtml subject)) "/forgot"))
 
-(defhook login-form args
+(defhook login-form name: news args
   (link "Forgot your password?" (forgot-url)))
 
 ; Scrubrules
