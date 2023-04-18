@@ -950,6 +950,8 @@
         (lambda (fn . args)
           (ar-apply fn (ar-apply-args args)))))
 
+(xdef kwproc make-keyword-procedure)
+
 ; special cases of ar-apply for speed and to avoid consing arg lists
 
 (define (ar-funcall0 fn)

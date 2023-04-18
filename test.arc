@@ -512,6 +512,12 @@
 ;  (test? 10 (get (obj a: 10) 'a))
 ;  (test? true (get (obj :a) 'a)))
 
+(define-test table
+  (test? 10 ((obj a: 10) 'a))
+  (test? true ((obj :a) 'a))
+  (let a 42
+    (test? 42 ((obj :a) 'a))))
+
 ;(define-test empty
 ;  (test? true (empty? ()))
 ;  (test? true (empty? (obj)))

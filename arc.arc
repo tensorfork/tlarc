@@ -1195,10 +1195,15 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
     (map (fn ((k v)) (= (h k) v))
          al)))
 
-(mac obj args
+(mac %object args
   `(listtab (list ,@(map (fn ((k v))
                            `(list ',k ,v))
                          (hug args)))))
+
+(mac obj (kwproc (fn (keys vals . args)
+                   (let kvs (apply + (zip (map sym keys) vals))
+                     `(%object ,@args ,@kvs)))
+                 (fn args `(%object ,@args))))
 
 (def load-table (file (o eof))
   (w/infile i file (read-table i eof)))
