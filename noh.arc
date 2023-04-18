@@ -2,9 +2,9 @@
 (load (libpath "srp.arc") :once)
 (load (libpath "php.arc") :once)
 
-(or= noh-chat-url* "127.0.0.1" ; local chat server testing
-     noh-chatrooms* (list "NoH" "test")
-     )
+(= noh-chat-url* "127.0.0.1" ; local chat server testing
+   noh-chatrooms* (list "help" "test")
+   )
 
 (addtem profile
   uid       nil
