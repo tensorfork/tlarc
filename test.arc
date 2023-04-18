@@ -491,6 +491,11 @@
       (test? nil b)
       (test? 19 i))))
 
+(define-test break
+  (let l '(a b c)
+    (test? l (each x l (out x)))
+    (test? 42 (each x l (break 42)))))
+
 ;(define-test for
 ;  (let l ()
 ;    (for i 5

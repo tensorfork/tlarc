@@ -531,8 +531,8 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
 
 (mac loop (start test update . body)
   (w/uniq (gfn gparm)
-    `(accum out
-       (point break
+    `(point break
+       (accum out
          ,start
          ((rfn ,gfn (,gparm) 
             (if ,gparm
@@ -575,8 +575,8 @@ For example, {a 1 b 2} => (%braces a 1 b 2) => (obj a 1 b 2)"
          (f (l i)))))
 
 (mac each (var expr . body)
-  `(accum out
-     (point break
+  `(point break
+     (accum out
        (across ,expr (fn (,var) ,@body)))))
 
 (def clamp (x a b)
