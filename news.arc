@@ -3124,7 +3124,7 @@ first asterisk isn't whitespace.
   (if (len< newpw 4)
       (force-resetpw-page subject "Passwords should be a least 4 characters long.
                           Please choose another.")
-      (do (set-pw subject newpw)
+      (do (set-pw newpw subject)
           (logout-user subject)
           (newspage nil))))
 
